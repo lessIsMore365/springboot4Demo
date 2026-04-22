@@ -1,0 +1,90 @@
+# Spring Boot 4 虚拟线程配置
+spring:
+  threads:
+    virtual:
+      enabled: true  # 启用虚拟线程支持（Spring Boot 4 特性）
+
+  # PostgreSQL 数据库配置
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/postgres
+    username: xz
+    password: 252511
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      # 虚拟线程优化配置
+      connection-timeout: 30000
+      maximum-pool-size: 50  # 虚拟线程下可以减少连接池大小
+      minimum-idle: 10
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      # 虚拟线程相关优化
+      allow-virtual-thread-pool: true  # 允许虚拟线程池
+      keepalive-time: 30000
+
+  # MyBatis Plus 配置
+  mybatis-plus:
+    # 配置文件位置
+    mapper-locations: classpath*:/mapper/**/*.xml
+    # 实体扫描，多个package用逗号或者分号分隔
+    type-aliases-package: org.example.entity
+    global-config:
+      # 数据库相关配置
+      db-config:
+        # 主键类型  AUTO:"数据库ID自增", INPUT:"用户输入ID", ID_WORKER:"全局唯一ID (数字类型唯一ID)", UUID:"全局唯一ID UUID";
+        id-type: auto
+        # 字段策略 IGNORED:"忽略判断",NOT_NULL:"非 NULL 判断"),NOT_EMPTY:"非空判断"
+        insert-strategy: not_null
+        update-strategy: not_null
+        # 逻辑删除配置
+        logic-delete-field: deleted  # 逻辑删除字段名
+        logic-delete-value: 1  # 逻辑已删除值(默认为 1)
+        logic-not-delete-value: 0  # 逻辑未删除值(默认为 0)
+    configuration:
+      # 是否开启自动驼峰命名规则映射:从数据库列名到Java属性驼峰命名的类似映射
+      map-underscore-to-camel-case: true
+      # 这个配置会将执行的sql打印出来，在开发或测试的时候可以用
+      log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+      # 全局地开启或关闭配置文件中的所有映射器已经配置的任何缓存
+      cache-enabled: false
+      # 虚拟线程相关优化 - 使用虚拟线程执行器
+      default-executor-type: reuse
+
+  # SQL 初始化配置
+  sql:
+    init:
+      mode: always  # 始终执行 schema.sql 和 data.sql
+      schema-locations: classpath:schema.sql
+      data-locations: classpath:data.sql
+
+  # Redis配置
+  redis:
+    host: 127.0.0.1
+    port: 6379
+    password: 252511
+    database: 0
+    timeout: 5000
+    lettuce:
+      pool:
+        max-active: 8
+        max-idle: 8
+        min-idle: 0
+        max-wait: -1
+
+  # Tomcat 配置优化（针对虚拟线程）
+  tomcat:
+    # 虚拟线程下，最大连接数可以设置得更高
+    max-connections: 10000
+    # 由于虚拟线程轻量，可以保持较小的 accept-count
+    accept-count: 100
+    # 虚拟线程模式下，最大线程数参数不再重要（每个请求一个虚拟线程）
+    threads:
+      max: 200  # 保持一个合理的值作为后备
+
+# 应用配置
+server:
+  port: 8080
+  tomcat:
+    # 连接超时设置
+    connection-timeout: 10s
+    # 保持连接超时
+    keep-alive-timeout: 30s

@@ -39,9 +39,10 @@ mvn clean package
 
 ### 公开端点
 以下端点无需认证：
-- `/api/auth/**` - 认证相关端点（注册、健康检查）
+- `/api/auth/**` - 认证相关端点（注册、健康检查、验证码）
 - `/api/roles/health` - 角色服务健康检查
 - `/api/permissions/health` - 权限服务健康检查
+- `/api/redis/**` - Redis 服务端点
 - `/oauth2/**` - OAuth2端点
 - `/.well-known/**` - OpenID Connect配置
 - `/hello` - Hello端点
@@ -137,6 +138,81 @@ GET /api/auth/health
     "service": "authentication",
     "timestamp": 1672531200000
   }
+  ```
+
+#### 获取图形验证码
+```http
+GET /api/auth/captcha
+```
+- **描述**: 获取图形验证码，返回 Base64 编码的 PNG 图片和验证码 key。验证码包含 4 位字符（排除易混淆字符如 0/O/1/I/L），带有随机颜色、旋转角度、干扰线和噪点。
+- **认证**: 不需要
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "data": {
+      "captchaKey": "b8ac36e795ec4515b5156fd39a4be01a",  // 验证码唯一标识，登录时需提交
+      "captchaImage": "data:image/png;base64,iVBORw0...", // Base64 PNG 图片，可直接用于 <img src>
+      "expireIn": 300                                     // 过期时间（秒），5分钟
+    },
+    "message": "验证码获取成功"
+  }
+  ```
+- **说明**: 验证码存储在 Redis 中，5 分钟过期，一次性使用（验证后自动删除）
+
+#### 验证验证码
+```http
+POST /api/auth/captcha/verify
+```
+- **描述**: 独立验证验证码是否有效（不会删除验证码，仅用于前端校验）。登录时验证码会在 OAuth2 token 请求中自动校验并删除。
+- **认证**: 不需要
+- **请求体**:
+  ```json
+  {
+    "captchaKey": "b8ac36e795ec4515b5156fd39a4be01a",  // 验证码key（必填）
+    "captchaCode": "A3K9"                                // 用户输入的验证码（必填）
+  }
+  ```
+- **成功响应**:
+  ```json
+  {
+    "success": true,
+    "message": "验证码验证通过"
+  }
+  ```
+- **失败响应**:
+  ```json
+  {
+    "success": false,
+    "message": "验证码错误或已过期"
+  }
+  ```
+
+#### OAuth2 令牌获取（含验证码）
+```http
+POST /oauth2/token
+```
+- **描述**: 获取 OAuth2 访问令牌。password 模式登录时需附加验证码参数。
+- **认证**: 不需要（使用 OAuth2 客户端认证）
+- **参数**: `application/x-www-form-urlencoded`
+  | 参数 | 类型 | 必填 | 说明 |
+  |------|------|------|------|
+  | `grant_type` | string | 是 | 授权类型，password 模式使用 `password` |
+  | `username` | string | 是 | 用户名 |
+  | `password` | string | 是 | 用户密码 |
+  | `captcha_key` | string | 是 (password模式) | 验证码key，通过 `/api/auth/captcha` 获取 |
+  | `captcha_code` | string | 是 (password模式) | 用户输入的验证码 |
+- **说明**: 验证码验证过滤器只拦截 `grant_type=password` 的请求，其他授权类型不受影响
+- **示例**:
+  ```bash
+  # 1. 先获取验证码
+  CAPTCHA=$(curl -s http://localhost:8080/api/auth/captcha)
+  KEY=$(echo "$CAPTCHA" | jq -r '.data.captchaKey')
+  
+  # 2. 登录（密码模式需要验证码通过）
+  curl -X POST http://localhost:8080/oauth2/token \
+    -u "client-id:client-secret" \
+    -d "grant_type=password&username=admin&password=password&captcha_key=$KEY&captcha_code=XXXX"
   ```
 
 ### 2. 用户管理模块 (UserController)
@@ -876,6 +952,17 @@ DELETE /api/redis/flush
      -d '{"username":"test","password":"test123","email":"test@example.com"}'
    ```
 
+3. **验证码测试**:
+   ```bash
+   # 获取验证码
+   curl http://localhost:8080/api/auth/captcha
+   
+   # 验证验证码（需先获取 captchaKey）
+   curl -X POST http://localhost:8080/api/auth/captcha/verify \
+     -H "Content-Type: application/json" \
+     -d '{"captchaKey":"xxx","captchaCode":"A3K9"}'
+   ```
+
 ### 故障排除
 
 #### 常见问题
@@ -889,7 +976,13 @@ DELETE /api/redis/flush
    - 检查用户角色和权限分配
    - 验证安全配置
 
-3. **虚拟线程未启用**
+3. **验证码相关**
+   - 验证码区分大小写（实际上不区分，验证时忽略大小写）
+   - 验证码 5 分钟过期，超时需重新获取
+   - 验证码一次性使用，验证后即删除
+   - password 模式登录必须携带 `captcha_key` 和 `captcha_code` 参数
+
+4. **虚拟线程未启用**
    - 确认Java版本为21+
    - 检查`spring.threads.virtual.enabled`配置
    - 验证`VirtualThreadConfig`是否正确加载

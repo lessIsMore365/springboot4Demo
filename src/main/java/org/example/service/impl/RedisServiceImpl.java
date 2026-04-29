@@ -8,7 +8,6 @@ import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ScanOptions;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -358,8 +357,9 @@ public class RedisServiceImpl implements RedisService {
         log.info("测试Redis连接 - 当前线程: {}, 是否虚拟线程: {}", currentThread, currentThread.isVirtual());
 
         try {
-            String result = redisTemplate.execute(new DefaultRedisScript<>("return 'Redis连接测试成功，当前时间: ' .. redis.call('time')", String.class),
-                    Collections.emptyList());
+            String result = redisTemplate.execute((RedisConnection connection) ->
+                    "Redis连接测试成功，PING: " + connection.ping()
+            );
             return result;
         } catch (Exception e) {
             log.error("Redis连接测试失败", e);

@@ -91,14 +91,17 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         // 公开端点
                         .requestMatchers(
-                                "/api/auth/**",           // 认证相关端点（注册、健康检查等）
-                                "/api/roles/health",      // 角色服务健康检查
-                                "/api/permissions/health", // 权限服务健康检查
-                                "/api/redis/**",          // Redis 服务端点
-                                "/hello",                 // Hello端点
-                                "/demo/hello",            // 虚拟线程演示端点
-                                "/db/**",                 // 数据库测试端点
-                                "/.well-known/**"         // OpenID Connect配置
+                                "/api/auth/**",              // 认证相关端点（注册、健康检查等）
+                                "/api/roles/health",         // 角色服务健康检查
+                                "/api/permissions/health",   // 权限服务健康检查
+                                "/api/redis/**",             // Redis 服务端点
+                                "/api/payment/notify/**",    // 支付异步通知回调（公开）
+                                "/api/payment/health",       // 支付服务健康检查
+                                "/api/reconciliation/health",// 对帐服务健康检查
+                                "/hello",                    // Hello端点
+                                "/demo/hello",               // 虚拟线程演示端点
+                                "/db/**",                    // 数据库测试端点
+                                "/.well-known/**"            // OpenID Connect配置
                         ).permitAll()
                         // 需要认证的端点
                         .requestMatchers("/api/users/**").authenticated()

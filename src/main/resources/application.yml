@@ -88,3 +88,29 @@ server:
     connection-timeout: 10s
     # 保持连接超时
     keep-alive-timeout: 30s
+
+# 支付配置
+payment:
+  alipay:
+    app-id: ${ALIPAY_APP_ID:2021000000000000}
+    private-key: ${ALIPAY_PRIVATE_KEY:}
+    alipay-public-key: ${ALIPAY_PUBLIC_KEY:}
+    gateway-url: https://openapi.alipay.com/gateway.do
+    sign-type: RSA2
+    notify-url: ${ALIPAY_NOTIFY_URL:http://localhost:8080/api/payment/notify/alipay}
+    return-url: ${ALIPAY_RETURN_URL:http://localhost:8080/payment/result}
+  wechat:
+    app-id: ${WECHAT_APP_ID:wx0000000000000000}
+    mch-id: ${WECHAT_MCH_ID:0000000000}
+    api-v3-key: ${WECHAT_API_V3_KEY:}
+    mch-serial-no: ${WECHAT_MCH_SERIAL_NO:}
+    private-key-path: ${WECHAT_PRIVATE_KEY_PATH:}
+    notify-url: ${WECHAT_NOTIFY_URL:http://localhost:8080/api/payment/notify/wechat}
+
+# 日志配置
+logging:
+  level:
+    org.springframework.security: DEBUG
+    org.springframework.security.oauth2: DEBUG
+    org.springframework.security.oauth2.server.authorization: DEBUG
+    org.example: DEBUG

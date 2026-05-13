@@ -50,8 +50,8 @@ public class CustomUserDetailsService implements UserDetailsService {
             throw new UsernameNotFoundException("用户不存在: " + username);
         }
 
-        // 更新最后登录时间
-        updateLastLoginTime(user);
+        // 更新最后登录时间（暂时禁用，因为乐观锁有问题）
+        // updateLastLoginTime(user);
 
         log.info("用户加载成功: {}, 角色: {}", username, user.getRoles());
         return createUserDetails(user);

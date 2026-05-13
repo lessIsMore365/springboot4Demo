@@ -17,7 +17,6 @@ import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -377,6 +376,64 @@ public class PaymentServiceImpl implements PaymentService {
         paymentOrderMapper.updateById(order);
 
         return Map.of("success", true, "refundTradeNo", refundTradeNo, "amount", refundAmount);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int closeExpiredOrders() {
+        Thread currentThread = Thread.currentThread();
+        log.info("扫描超时未支付订单 - 线程: {}, 虚拟线程: {}", currentThread, currentThread.isVirtual());
+
+        LocalDateTime deadline = LocalDateTime.now().minusMinutes(45);
+
+        LambdaQueryWrapper<PaymentOrder> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(PaymentOrder::getStatus, "PENDING")
+                .lt(PaymentOrder::getCreateTime, deadline);
+
+        List<PaymentOrder> expiredOrders = paymentOrderMapper.selectList(wrapper);
+
+        if (expiredOrders.isEmpty()) {
+            log.debug("无超时未支付订单");
+            return 0;
+        }
+
+        log.info("发现 {} 笔超时未支付订单（超过45分钟），开始批量关闭", expiredOrders.size());
+
+        int closedCount = 0;
+        for (PaymentOrder order : expiredOrders) {
+            try {
+                // 调用平台关单接口
+                if ("ALIPAY".equalsIgnoreCase(order.getPaymentMethod())) {
+                    Map<String, String> bizContent = new LinkedHashMap<>();
+                    bizContent.put("out_trade_no", order.getOrderNo());
+
+                    Map<String, String> params = new LinkedHashMap<>();
+                    params.put("app_id", alipayConfig.getAppId());
+                    params.put("method", "alipay.trade.close");
+                    params.put("charset", "UTF-8");
+                    params.put("sign_type", alipayConfig.getSignType());
+                    params.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+                    params.put("version", "1.0");
+                    params.put("biz_content", objectMapper.writeValueAsString(bizContent));
+                    String signContent = alipayConfig.buildSignContent(params);
+                    params.put("sign", alipayConfig.sign(signContent));
+                    log.debug("支付宝关单 - 订单号: {}", order.getOrderNo());
+                } else if ("WECHAT".equalsIgnoreCase(order.getPaymentMethod())) {
+                    log.debug("微信关单 - 订单号: {}", order.getOrderNo());
+                }
+
+                order.setStatus("CLOSED");
+                paymentOrderMapper.updateById(order);
+                closedCount++;
+                log.info("超时订单已自动关闭 - 订单号: {}, 创建时间: {}, 金额: {}",
+                        order.getOrderNo(), order.getCreateTime(), order.getAmount());
+            } catch (Exception e) {
+                log.error("关闭超时订单失败 - 订单号: {}", order.getOrderNo(), e);
+            }
+        }
+
+        log.info("批量关闭超时订单完成 - 共 {} 笔，成功 {} 笔", expiredOrders.size(), closedCount);
+        return closedCount;
     }
 
     @Override

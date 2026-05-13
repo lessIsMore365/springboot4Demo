@@ -54,7 +54,7 @@ public class CaptchaValidationFilter extends OncePerRequestFilter {
         String captchaKey = request.getParameter("captcha_key");
         String captchaCode = request.getParameter("captcha_code");
 
-        log.info("验证码验证 - captchaKey: {}, captchaCode: {}, URI: {}",
+        log.info("OAuth2登录验证码校验 - captchaKey: {}, captchaCode: {}, URI: {}",
                 captchaKey, captchaCode, request.getRequestURI());
 
         // 验证码验证

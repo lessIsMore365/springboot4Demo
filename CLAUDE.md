@@ -4,7 +4,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
-This is a Spring Boot 4 demonstration project showcasing virtual thread support with PostgreSQL database integration. The project uses Spring Boot 4.1.0-M3 (milestone release) with Java 21.
+This is a Spring Boot 4 demonstration project showcasing virtual thread support with PostgreSQL database integration. The project uses Spring Boot 4.1.0-M3 (milestone release) with Java 25.
 
 ## Build and Development Commands
 
@@ -41,9 +41,28 @@ mvn clean package
 
 ### 通用说明
 - 基础路径: `http://localhost:8080`
-- 认证方式: OAuth2 (password grant) + JWT
-- 公开端点无需认证，受保护端点需携带 `Authorization: Bearer <token>`
+- 认证方式: Spring Authorization Server (OAuth2 password grant + JWT)
+- **公开端点**（无需认证）：`/api/auth/register`、`/api/auth/captcha`、`/api/auth/captcha/verify`、`/api/auth/health`、`/api/payment/notify/**`、`/.well-known/**`
+- **获取 Token**：`POST /oauth2/token` 使用 Basic Auth（Client ID + Client Secret）+ `grant_type=password` + 验证码
+- **访问受保护端点**：携带 `Authorization: Bearer <access_token>`
 - 虚拟线程端点带 `/async` 后缀，异步返回 `CompletableFuture`
+
+### OAuth2 客户端凭据
+
+| 客户端 | Client ID | Client Secret | 支持的 Grant Type |
+|--------|-----------|---------------|-------------------|
+| Web 客户端 | `web-client` | `secret` | password, client_credentials, refresh_token, authorization_code |
+| API 客户端 | `api-client` | `api-secret` | password, client_credentials, refresh_token |
+
+### 认证流程
+
+```
+1. GET /api/auth/captcha  →  获取 captchaKey + 识别图片中的汉字
+2. POST /oauth2/token     →  Basic Auth (web-client:secret) + grant_type=password + 用户凭据 + 验证码
+3. 返回 access_token + refresh_token
+4. Authorization: Bearer <access_token> → 访问受保护接口
+5. 使用 refresh_token 刷新 access_token（无需验证码）
+```
 
 ---
 
@@ -89,9 +108,9 @@ mvn clean package
 
 ---
 
-### 3. 认证端点（公开）
+### 3. 认证端点
 
-#### `POST /api/auth/register`
+#### `POST /api/auth/register`（公开）
 用户注册
 
 **请求体:**
@@ -117,8 +136,74 @@ mvn clean package
 }
 ```
 
-#### `GET /api/auth/me`
-获取当前登录用户信息（需要认证）
+#### `POST /oauth2/token`（公开，Basic Auth）
+OAuth2 令牌端点，使用 Spring Authorization Server。**需要 Basic Auth 请求头**（Client ID + Client Secret）。
+
+**密码模式（password grant）— 用户登录:**
+
+```
+POST /oauth2/token
+Authorization: Basic base64(web-client:secret)
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&username=admin&password=password&captcha_key=abc123&captcha_code=春天
+```
+
+**curl 示例:**
+```bash
+# 1. 获取验证码
+CAPTCHA=$(curl -s http://localhost:8080/api/auth/captcha)
+CAPTCHA_KEY=$(echo "$CAPTCHA" | jq -r '.data.captchaKey')
+CAPTCHA_CODE="春天"  # 根据图片识别
+
+# 2. 登录获取 token
+curl -s -X POST http://localhost:8080/oauth2/token \
+  -u "web-client:secret" \
+  -d "grant_type=password" \
+  -d "username=admin" \
+  -d "password=password" \
+  -d "captcha_key=$CAPTCHA_KEY" \
+  -d "captcha_code=$CAPTCHA_CODE"
+```
+
+**响应示例:**
+```json
+{
+  "access_token": "eyJraWQiOiI...",
+  "refresh_token": "NCbpFspfq6...",
+  "token_type": "Bearer",
+  "expires_in": 3599,
+  "scope": "read openid profile write"
+}
+```
+
+**刷新令牌（refresh_token grant）— 无需验证码:**
+
+```bash
+curl -s -X POST http://localhost:8080/oauth2/token \
+  -u "web-client:secret" \
+  -d "grant_type=refresh_token" \
+  -d "refresh_token=NCbpFspfq6..."
+```
+
+**客户端凭据模式（client_credentials grant）— 服务间调用:**
+
+```bash
+curl -s -X POST http://localhost:8080/oauth2/token \
+  -u "api-client:api-secret" \
+  -d "grant_type=client_credentials"
+```
+
+**Token 配置:**
+| 客户端 | Access Token 有效期 | Refresh Token 有效期 | Refresh Token 复用 |
+|--------|-------------------|---------------------|-------------------|
+| web-client | 1 小时 | 7 天 | 不复用（每次都发新 token） |
+| api-client | 2 小时 | 30 天 | 可复用 |
+
+#### `GET /api/auth/me`（需要认证）
+获取当前登录用户信息
+
+**请求头:** `Authorization: Bearer <access_token>`
 
 **响应示例:**
 ```json
@@ -139,28 +224,40 @@ mvn clean package
     "lastLoginTime": "2026-05-03T08:00:00",
     "remark": "系统管理员"
   },
-  "authorities": ["ROLE_ADMIN"],
+  "authorities": [
+    {"authority": "FACTOR_BEARER"},
+    {"authority": "SCOPE_read"},
+    {"authority": "SCOPE_write"},
+    {"authority": "SCOPE_openid"},
+    {"authority": "SCOPE_profile"}
+  ],
   "timestamp": 1700000000000
 }
 ```
 
-#### `GET /api/auth/health`
+#### `GET /api/auth/health`（公开）
 认证服务健康检查
 
 ---
 
 ### 4. 验证码端点（公开）
 
+点击汉字顺序验证码：图片上随机散布 4~5 个汉字，用户需按提示顺序依次点击正确汉字。支持文本和坐标两种验证方式。
+
 #### `GET /api/auth/captcha`
-获取图形验证码，返回 Base64 PNG 图片 + captchaKey（5分钟有效期）
+获取点击汉字顺序验证码，返回 Base64 PNG 图片（350×180）+ 提示文字 + 字符坐标（5分钟有效期）
 
 **响应示例:**
 ```json
 {
   "success": true,
   "data": {
-    "captchaKey": "abc123-def456-789",
+    "captchaKey": "abc123def456",
     "captchaImage": "data:image/png;base64,iVBORw0KGgo...",
+    "promptText": "请依次点击：春天",
+    "charCount": 2,
+    "imageWidth": 350,
+    "imageHeight": 180,
     "expireIn": 300
   },
   "message": "验证码获取成功"
@@ -168,13 +265,13 @@ mvn clean package
 ```
 
 #### `POST /api/auth/captcha/verify`
-验证验证码
+文本验证验证码（用户输入汉字序列，兼容 OAuth2 密码登录流程）
 
 **请求体:**
 ```json
 {
-  "captchaKey": "abc123-def456-789",
-  "captchaCode": "A3xK"
+  "captchaKey": "abc123def456",
+  "captchaCode": "春天"
 }
 ```
 
@@ -186,27 +283,30 @@ mvn clean package
 }
 ```
 
-#### `POST /oauth2/token`
-OAuth2 登录（password grant），需额外提交 `captcha_key` + `captcha_code` 参数
+#### `POST /api/auth/captcha/verify-position`
+坐标验证验证码（前端收集用户点击坐标提交验证，容差半径 40px）
 
-**请求参数 (application/x-www-form-urlencoded):**
-```
-grant_type=password
-username=admin
-password=password
-captcha_key=abc123-def456-789
-captcha_code=A3xK
+**请求体:**
+```json
+{
+  "captchaKey": "abc123def456",
+  "positions": [
+    {"x": 80, "y": 90},
+    {"x": 220, "y": 100}
+  ]
+}
 ```
 
 **响应示例:**
 ```json
 {
-  "access_token": "eyJhbGciOi...",
-  "refresh_token": "abc...",
-  "token_type": "Bearer",
-  "expires_in": 7200
+  "success": true,
+  "message": "验证码验证通过"
 }
 ```
+
+#### 与 OAuth2 认证的衔接
+验证码参数（`captcha_key` + `captcha_code`）在 `POST /oauth2/token` (password grant) 时提交，需同时携带 Basic Auth 请求头。详见 [3. 认证端点](#3-认证端点)。
 
 ---
 
@@ -332,7 +432,7 @@ captcha_code=A3xK
 
 ---
 
-### 8. Redis 端点（公开）
+### 8. Redis 端点（需要认证）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -698,6 +798,744 @@ Wechatpay-Timestamp: 1700000000
 
 ---
 
+### 12. JVM 监控端点（需要认证）
+
+JVM 实时监控端点，提供堆内存、线程（虚拟线程 vs 平台线程）、GC、线程转储等数据，可用于构建前端监控面板。
+
+#### `GET /api/monitor/jvm/overview`
+JVM 综合概览，一次调用获取全部关键指标
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "jvmName": "OpenJDK 64-Bit Server VM",
+    "jvmVersion": "23.0.1",
+    "uptimeMs": 3600000,
+    "uptimeFormatted": "1h 0m 0s",
+    "availableProcessors": 12,
+    "systemLoadAverage": 2.5,
+    "memory": {
+      "heapUsed": 268435456,
+      "heapMax": 4294967296,
+      "heapCommitted": 536870912,
+      "heapUsagePercent": 6.25,
+      "nonHeapUsed": 134217728,
+      "nonHeapCommitted": 150994944,
+      "metaspaceUsed": 100663296,
+      "metaspaceMax": 268435456,
+      "pools": [
+        {"name": "G1 Eden Space", "used": 134217728, "committed": 268435456, "max": -1, "usagePercent": 0},
+        {"name": "G1 Survivor Space", "used": 8388608, "committed": 16777216, "max": -1, "usagePercent": 0},
+        {"name": "G1 Old Gen", "used": 125829120, "committed": 251658240, "max": 4294967296, "usagePercent": 2.93},
+        {"name": "Metaspace", "used": 100663296, "committed": 117440512, "max": 268435456, "usagePercent": 37.5},
+        {"name": "CodeCache", "used": 20971520, "committed": 22020096, "max": 251658240, "usagePercent": 8.33},
+        {"name": "Compressed Class Space", "used": 12582912, "committed": 13631488, "max": 1073741824, "usagePercent": 1.17}
+      ]
+    },
+    "threads": {
+      "currentCount": 42,
+      "virtualCount": 18,
+      "platformCount": 24,
+      "daemonCount": 20,
+      "peakCount": 52,
+      "totalStarted": 523
+    },
+    "gc": [
+      {"name": "G1 Young Generation", "collectionCount": 15, "collectionTimeMs": 320},
+      {"name": "G1 Old Generation", "collectionCount": 3, "collectionTimeMs": 180}
+    ]
+  },
+  "timestamp": 1700000000000
+}
+```
+
+**字段说明:**
+| 字段 | 说明 |
+|------|------|
+| `memory.heapUsed` | 堆内存已使用 (bytes) |
+| `memory.heapMax` | 堆内存最大值 (bytes)，`-1` 表示无上限 |
+| `memory.heapUsagePercent` | 堆内存使用率 (%) |
+| `memory.pools` | 各内存池详情（G1 Eden/Survivor/Old Gen、Metaspace、CodeCache 等） |
+| `threads.virtualCount` | 虚拟线程数（名称以 `VirtualThread[` 开头） |
+| `threads.platformCount` | 平台线程数 |
+| `threads.peakCount` | 线程峰值（自 JVM 启动以来） |
+| `gc[].collectionCount` | GC 收集次数 |
+| `gc[].collectionTimeMs` | GC 总耗时 (ms) |
+
+---
+
+#### `GET /api/monitor/jvm/memory`
+内存详情 - 含堆/非堆 + 各内存池 + 物理内存快照
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "summary": {
+      "heapUsed": 268435456,
+      "heapMax": 4294967296,
+      "heapCommitted": 536870912,
+      "heapUsagePercent": 6.25,
+      "nonHeapUsed": 134217728,
+      "nonHeapCommitted": 150994944,
+      "metaspaceUsed": 100663296,
+      "metaspaceMax": 268435456,
+      "pools": [
+        {"name": "G1 Eden Space", "used": 134217728, "committed": 268435456, "max": -1, "usagePercent": 0},
+        {"name": "Metaspace", "used": 100663296, "committed": 117440512, "max": 268435456, "usagePercent": 37.5}
+      ]
+    },
+    "snapshot": {
+      "totalPhysical": 34359738368,
+      "freePhysical": 8589934592,
+      "totalSwap": 10737418240,
+      "freeSwap": 5368709120
+    }
+  },
+  "timestamp": 1700000000000
+}
+```
+
+---
+
+#### `GET /api/monitor/jvm/threads`
+线程详情 - 虚拟线程 vs 平台线程统计 + CPU Top 20 线程 + 状态分布
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "summary": {
+      "currentCount": 42,
+      "virtualCount": 18,
+      "platformCount": 24,
+      "daemonCount": 20,
+      "peakCount": 52,
+      "totalStarted": 523
+    },
+    "topCpuThreads": [
+      {
+        "id": 42,
+        "name": "VirtualThread[#42]/runnable@ForkJoinPool-1-worker-2",
+        "state": "RUNNABLE",
+        "virtual": true,
+        "cpuTimeMs": 1250,
+        "stackTrace": "    at org.example.DemoApplication.main(DemoApplication.java:15)\n    at java.base/jdk.internal.reflect..."
+      }
+    ],
+    "stateDistribution": [
+      {"state": "RUNNABLE", "count": 12},
+      {"state": "WAITING", "count": 15},
+      {"state": "TIMED_WAITING", "count": 8},
+      {"state": "BLOCKED", "count": 1}
+    ]
+  },
+  "timestamp": 1700000000000
+}
+```
+
+**状态分布说明:**
+| 状态 | 说明 |
+|------|------|
+| `RUNNABLE` | 正在运行或可运行 |
+| `WAITING` | 无限期等待（Object.wait、LockSupport.park） |
+| `TIMED_WAITING` | 限时等待（Thread.sleep、LockSupport.parkNanos） |
+| `BLOCKED` | 等待获取锁（synchronized） |
+| `TERMINATED` | 已终止 |
+
+---
+
+#### `GET /api/monitor/jvm/thread-dump`
+线程转储 - 全部线程及堆栈跟踪（最多 50 帧），用于排查死锁、线程泄漏
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "totalCount": 42,
+    "virtualCount": 18,
+    "platformCount": 24,
+    "threads": [
+      {
+        "id": 1,
+        "name": "main",
+        "state": "RUNNABLE",
+        "virtual": false,
+        "cpuTimeMs": 0,
+        "stackTrace": "    at java.base/java.lang.Thread.sleep(Native Method)\n    at org.example.DemoApplication.main(DemoApplication.java:15)\n    ... 5 more"
+      },
+      {
+        "id": 42,
+        "name": "VirtualThread[#42]/runnable@ForkJoinPool-1-worker-2",
+        "state": "RUNNABLE",
+        "virtual": true,
+        "cpuTimeMs": 0,
+        "stackTrace": "    at org.example.service.impl.PaymentServiceImpl.createPayment(PaymentServiceImpl.java:42)\n    ... 8 more"
+      }
+    ]
+  },
+  "timestamp": 1700000000000
+}
+```
+
+---
+
+#### `GET /api/monitor/jvm/gc`
+GC 详情 - 各垃圾收集器的回收次数和总耗时
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {"name": "G1 Young Generation", "collectionCount": 15, "collectionTimeMs": 320},
+    {"name": "G1 Old Generation", "collectionCount": 3, "collectionTimeMs": 180}
+  ],
+  "timestamp": 1700000000000
+}
+```
+
+---
+
+### 13. Java 21+ 新特性演示端点（学习用，需要认证）
+
+Spring Boot 4 / Java 21+ 五大新特性交互式演示。所有端点**需要认证**（Bearer Token），返回 JSON。
+
+---
+
+#### 13.1 虚拟线程 (Virtual Thread)
+
+基础路径: `/java21/virtual-thread`
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/java21/virtual-thread/info` | 查看当前请求线程信息（是否虚拟线程） |
+| `GET` | `/java21/virtual-thread/create-virtual?count=10000` | 批量创建虚拟线程 |
+| `GET` | `/java21/virtual-thread/create-platform?count=200` | 批量创建平台线程（对比，上限 500） |
+| `GET` | `/java21/virtual-thread/compare?vCount=10000&pCount=200` | 虚拟线程 vs 平台线程性能对比 |
+| `GET` | `/java21/virtual-thread/massive?count=100000` | 海量虚拟线程测试（最大 100 万） |
+| `GET` | `/java21/virtual-thread/pinning` | 线程 pinning 检测（synchronized） |
+| `GET` | `/java21/virtual-thread/async` | @Async 虚拟线程异步执行 |
+| `GET` | `/java21/virtual-thread/builder-api` | Thread.ofVirtual() 链式 API 演示 |
+
+**响应示例 (`/info`):**
+```json
+{
+  "threadName": "VirtualThread[#42]/runnable@ForkJoinPool-1-worker-2",
+  "threadId": 42,
+  "isVirtual": true,
+  "isDaemon": true,
+  "priority": 5,
+  "threadGroup": "VirtualThreads"
+}
+```
+
+**响应示例 (`/massive?count=100000`):**
+```json
+{
+  "totalTasks": 100000,
+  "completedTasks": 100000,
+  "elapsedMs": 32,
+  "avgTaskTimeUs": 0
+}
+```
+
+**响应示例 (`/compare?vCount=10000&pCount=200`):**
+```json
+{
+  "virtualThreadResult": {
+    "threadType": "VIRTUAL",
+    "requestedCount": 10000,
+    "actualCompleted": 10000,
+    "elapsedMs": 2,
+    "throughputPerSecond": 5000000
+  },
+  "platformThreadResult": {
+    "threadType": "PLATFORM",
+    "requestedCount": 200,
+    "actualCompleted": 200,
+    "elapsedMs": 5,
+    "note": "平台线程受 OS 限制，创建大量平台线程可能导致 OOM"
+  },
+  "summary": "虚拟线程: 10000个/2ms, 平台线程: 200个/5ms"
+}
+```
+
+**响应示例 (`/pinning`):**
+```json
+{
+  "taskCount": 100,
+  "elapsedMs": 115,
+  "note": "synchronized 块内 sleep 会导致虚拟线程 pinning（JDK 24+ 已修复）",
+  "pinningEffect": "如果每个任务串行执行需要 1000ms（100 × 10ms），实际耗时 115ms"
+}
+```
+
+**对比端点:**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/java21/virtual-thread/compare-traditional?taskCount=100&sleepMs=50` | 传统固定线程池 vs 虚拟线程并发处理对比 |
+
+**对比响应示例 (`/compare-traditional?taskCount=100&sleepMs=50`):**
+```json
+{
+  "taskCount": 100,
+  "sleepPerTaskMs": 50,
+  "threadPool": {
+    "approach": "Executors.newFixedThreadPool(50) + submit",
+    "poolSize": 50,
+    "elapsedMs": 102,
+    "note": "100 个任务排队在 50 个线程上，串行等待"
+  },
+  "virtualThread": {
+    "approach": "Thread.ofVirtual().start() — 每个任务一个虚拟线程",
+    "elapsedMs": 51,
+    "note": "100 个虚拟线程并发执行，无排队"
+  },
+  "speedup": "2.0x 加速"
+}
+```
+
+---
+
+#### 13.2 结构化并发 (Structured Concurrency)
+
+基础路径: `/java21/structured-concurrency`
+
+> 需要 `--enable-preview`（Java 23 预览特性 JEP 480）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/java21/structured-concurrency/user-orders?userId=1` | ShutdownOnFailure：并行获取用户+订单 |
+| `GET` | `/java21/structured-concurrency/weather?city=北京` | ShutdownOnSuccess：多源竞速返回最先结果 |
+| `GET` | `/java21/structured-concurrency/payment?orderId=1001` | 支付+通知并行处理 |
+| `GET` | `/java21/structured-concurrency/error-handling` | throwIfFailed(Function) 自定义异常包装 |
+| `GET` | `/java21/structured-concurrency/timeout` | joinUntil 超时控制演示 |
+
+**响应示例 (`/user-orders?userId=1`):**
+```json
+{
+  "userName": "用户#1",
+  "totalOrders": 2,
+  "mode": "ShutdownOnFailure - 任一任务失败则整体失败",
+  "orders": [
+    { "orderId": 1001, "amount": 99.90, "status": "已完成", "createTime": "2026-05-08T10:21:17" },
+    { "orderId": 1002, "amount": 199.00, "status": "待发货", "createTime": "2026-05-08T22:21:17" }
+  ]
+}
+```
+
+**响应示例 (`/weather?city=北京`):**
+```json
+{
+  "weather": { "source": "气象局C", "city": "北京", "temperature": 25, "condition": "晴" },
+  "mode": "ShutdownOnSuccess - 取最先返回的结果，其他任务自动取消"
+}
+```
+
+**响应示例 (`/error-handling`):**
+```json
+{
+  "error": "业务执行失败，捕获 1 个抑制异常",
+  "suppressedCount": 1,
+  "mode": "ShutdownOnFailure.throwIfFailed(Function) 自定义异常包装"
+}
+```
+
+**响应示例 (`/timeout`):**
+```json
+{
+  "result": "超时",
+  "note": "joinUntil(100ms) 在 100ms 后抛出 TimeoutException",
+  "mode": "超时控制确保不会无限等待"
+}
+```
+
+**对比端点:**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/java21/structured-concurrency/compare-traditional?userId=1` | 传统 CompletableFuture.allOf() vs StructuredTaskScope |
+| `GET` | `/java21/structured-concurrency/compare-race?city=北京` | 传统 CompletableFuture.anyOf() vs ShutdownOnSuccess |
+
+**对比响应示例 (`/compare-traditional?userId=1`):**
+```json
+{
+  "traditional": {
+    "approach": "CompletableFuture.allOf() + 手动 join/get",
+    "code": "CompletableFuture.supplyAsync(task1);\nCompletableFuture.supplyAsync(task2);\nCompletableFuture.allOf(f1, f2).join();\nf1.get(); f2.get();",
+    "result": "用户=用户#1, 订单数=2",
+    "elapsedMs": 124
+  },
+  "structuredConcurrency": {
+    "approach": "StructuredTaskScope.ShutdownOnFailure",
+    "code": "try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {\n    Subtask<T> t1 = scope.fork(task1);\n    scope.join(); scope.throwIfFailed();\n}",
+    "result": "用户=用户#1, 订单数=2",
+    "elapsedMs": 122
+  },
+  "keyDifferences": [
+    "结构化并发: try-with-resources 自动清理 → 无资源泄漏",
+    "结构化并发: 任一失败 → 其他任务自动取消",
+    "传统做法: 需手动处理异常和取消 → 容易遗漏"
+  ]
+}
+```
+
+---
+
+#### 13.3 作用域值 (Scoped Value)
+
+基础路径: `/java21/scoped-value`
+
+> 需要 `--enable-preview`（Java 23 预览特性 JEP 481）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/java21/scoped-value/basic` | ScopedValue 基本用法 |
+| `GET` | `/java21/scoped-value/isolation` | 作用域隔离：嵌套覆盖 + 离开解绑 |
+| `GET` | `/java21/scoped-value/request-context?userId=1&username=admin&role=ROLE_ADMIN` | 模拟 Web Filter → 深层调用链访问 |
+| `GET` | `/java21/scoped-value/compare-tl` | ScopedValue vs ThreadLocal 性能对比（10 万次） |
+| `GET` | `/java21/scoped-value/fallback` | orElse / orElseThrow 降级方法 |
+| `GET` | `/java21/scoped-value/multi` | 同时绑定多个 ScopedValue |
+
+**响应示例 (`/basic`):**
+```json
+{
+  "boundUserId": 1000,
+  "boundUsername": "admin",
+  "isBound": true,
+  "pattern": "ScopedValue.where(SV, value).call(() -> { SV.get() })"
+}
+```
+
+**响应示例 (`/isolation`):**
+```json
+{
+  "outsideBound": false,
+  "note": "离开 ScopedValue.where().run() 后，值自动解绑（isBound=false）",
+  "nestingNote": "嵌套 where() 会覆盖值，离开嵌套后恢复外层值"
+}
+```
+
+**响应示例 (`/request-context?userId=1&username=demo&role=ROLE_USER`):**
+```json
+{
+  "user": { "userId": 1, "username": "demo", "role": "ROLE_USER" },
+  "traceId": "trace-1746756877606",
+  "serviceLayerResult": "Service 层已处理 (user=demo)",
+  "repositoryLayerResult": "Repository 层已处理 (traceId=trace-1746756877606)",
+  "pattern": "Filter 设置 ScopedValue → Controller → Service → Repository 任意深度都可访问"
+}
+```
+
+**响应示例 (`/compare-tl`):**
+```json
+{
+  "scopedValueReadNs": 1200000,
+  "threadLocalReadNs": 900000,
+  "note": "ScopedValue 不可变（安全）、自动清理（无泄漏），ThreadLocal 需手动 remove()（易泄漏）"
+}
+```
+
+**响应示例 (`/fallback`):**
+```json
+{
+  "orElseDefaultUser": { "userId": 0, "username": "anonymous", "role": "ROLE_GUEST" },
+  "orElseThrowResult": "用户未登录",
+  "isBoundOutside": false
+}
+```
+
+**对比端点:**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/java21/scoped-value/compare-traditional` | 传统 ThreadLocal vs ScopedValue 深度对比（含内存泄漏演示） |
+
+**对比响应示例 (`/compare-traditional`):**
+```json
+{
+  "threadLocal": {
+    "approach": "ThreadLocal.set()/get() + 手动 remove()",
+    "code": "threadLocal.set(value); threadLocal.get(); threadLocal.remove(); // 必须！",
+    "elapsedNs": 1800000,
+    "leakRisk": "ThreadLocal 值仍然存在: leak-99（线程复用会导致旧值残留）"
+  },
+  "scopedValue": {
+    "approach": "ScopedValue.where().run() 自动生命周期",
+    "code": "ScopedValue.where(SV, value).run(() -> { var v = SV.get(); });",
+    "elapsedNs": 2100000,
+    "leakRisk": "自动解绑，无泄漏风险"
+  },
+  "keyDifferences": [
+    "ThreadLocal: 线程生命周期绑定 → 线程池中易泄漏",
+    "ScopedValue: 词法作用域绑定 → 离开即消失",
+    "ThreadLocal: 可变 (set) → 任意位置可修改 → 难以追踪",
+    "ScopedValue: 不可变 → 只能在 where() 时设置一次"
+  ]
+}
+```
+
+---
+
+#### 13.4 模式匹配 (Pattern Matching)
+
+基础路径: `/java21/pattern-matching`
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/java21/pattern-matching/area?shape=circle&dim1=5` | switch + record pattern 计算面积 |
+| `GET` | `/java21/pattern-matching/describe?value=hello` | instanceof 类型模式匹配 |
+| `GET` | `/java21/pattern-matching/categorize?shape=circle&dim1=150` | guarded pattern (when 子句) |
+| `GET` | `/java21/pattern-matching/nested` | 嵌套 record pattern 解构 |
+| `GET` | `/java21/pattern-matching/api-response?type=success` | sealed interface 实际场景：API 响应 |
+| `GET` | `/java21/pattern-matching/unnamed?shape=circle&dim1=10` | unnamed pattern (_) |
+
+**查询参数说明:**
+| 参数 | 可选值 | 说明 |
+|------|--------|------|
+| `shape` | `circle` / `rectangle` / `triangle` | 图形类型 |
+| `dim1` | 数字 | 圆=半径, 矩形=宽, 三角形=底 |
+| `dim2` | 数字 | 矩形=高, 三角形=高 |
+| `value` | 任意 | 自动识别为数字/布尔/字符串 |
+| `type` | `success` / `error` | API 响应类型 |
+
+**响应示例 (`/area?shape=circle&dim1=5`):**
+```json
+{
+  "shapeType": "Circle",
+  "shapeDetails": "Circle[radius=5.0]",
+  "area": 78.54,
+  "pattern": "switch + record pattern: Circle(var r) -> π*r²"
+}
+```
+
+**响应示例 (`/describe?value=42`):**
+```json
+{
+  "input": "42",
+  "inputType": "java.lang.Integer",
+  "description": "整数: 42"
+}
+```
+
+**响应示例 (`/categorize?shape=circle&dim1=150`):**
+```json
+{
+  "shape": "Circle[radius=150.0]",
+  "category": "巨型圆",
+  "pattern": "guarded pattern: case Circle(var r) when r > 100 -> \"巨型圆\""
+}
+```
+
+**分类规则：**
+| 条件 | 分类 |
+|------|------|
+| `Circle(r) when r > 100` | 巨型圆 |
+| `Circle(r) when r > 10` | 大圆 |
+| `Circle(r)` | 小圆 |
+| `Rectangle(w,h) when w==h` | 正方形 |
+| `Rectangle(w,h) when w>2h or h>2w` | 长条形矩形 |
+| `Rectangle(w,h)` | 标准矩形 |
+| `Triangle(b,h) when b==h` | 等腰直角三角形 |
+| `Triangle _` | 普通三角形 |
+
+**响应示例 (`/nested`):**
+```json
+{
+  "input": "ColoredLine[line=Line[start=Point[x=0, y=0], end=Point[x=3, y=4]], color=红色]",
+  "result": "红色 色线段: (0,0)→(3,4)",
+  "pattern": "嵌套 record pattern: ColoredLine(Line(Point(var x1, var y1), Point(var x2, var y2)), var color)"
+}
+```
+
+**响应示例 (`/api-response?type=success`):**
+```json
+{
+  "type": "SUCCESS",
+  "data": { "id": 1, "name": "test" },
+  "message": "操作成功"
+}
+```
+
+**响应示例 (`/api-response?type=error`):**
+```json
+{
+  "type": "ERROR",
+  "code": 404,
+  "error": "资源未找到",
+  "details": ["ID 不存在", "请检查输入"],
+  "hint": "含 2 条详细信息"
+}
+```
+
+**对比端点:**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/java21/pattern-matching/compare-area?shape=circle&dim1=5` | 传统 if-else+instanceof+转型 vs switch record pattern |
+| `GET` | `/java21/pattern-matching/compare-describe?value=hello` | 传统 if-else 链 vs switch 类型模式 |
+| `GET` | `/java21/pattern-matching/compare-api-response?type=error` | 传统 if-else/Visitor vs sealed+record pattern |
+
+**对比响应示例 (`/compare-area?shape=circle&dim1=5`):**
+```json
+{
+  "traditional": {
+    "approach": "if-else + instanceof + 强制转型",
+    "code": "if (shape instanceof Circle) {\n    Circle c = (Circle) shape;\n    return Math.PI * c.radius() * c.radius();\n} else if ...",
+    "area": 78.54,
+    "problems": ["需要 instanceof 检查 + 强制转型，重复代码", "编译器不检查穷举性"]
+  },
+  "patternMatching": {
+    "approach": "switch + record pattern",
+    "code": "switch (shape) {\n    case Circle(var r) -> Math.PI * r * r;\n    case Rectangle(var w, var h) -> w * h;\n}",
+    "area": 78.54,
+    "advantages": ["一步完成类型判断 + 解构", "sealed class 保证穷举性"]
+  }
+}
+```
+
+---
+
+#### 13.5 Record 全生态化
+
+基础路径: `/java21/record`
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/java21/record/dto` | Record 作为不可变 DTO |
+| `GET` | `/java21/record/generic` | 泛型 Record `PageResult<T>` |
+| `GET` | `/java21/record/validation` | Compact constructor 参数验证 |
+| `GET` | `/java21/record/nested` | 嵌套 Record 深层访问 |
+| `GET` | `/java21/record/streams` | Record 在 Stream/分组/排序中的使用 |
+| `GET` | `/java21/record/serialization` | JSON 序列化往返一致性 |
+| `GET` | `/java21/record/implements` | Record 实现接口多态使用 |
+| `GET` | `/java21/record/methods` | Record 自定义实例/静态方法 |
+| `GET` | `/java21/record/local` | 方法内 Local Record（临时数据结构） |
+
+**响应示例 (`/dto`):**
+```json
+{
+  "product": { "id": 1, "name": "MacBook Pro", "price": 14999.00, "category": "电子产品" },
+  "toString": "ProductDTO[id=1, name=MacBook Pro, price=14999.00, category=电子产品]",
+  "equals": true,
+  "note": "Record 自动生成: 规范构造器、访问器、equals、hashCode、toString"
+}
+```
+
+**响应示例 (`/generic`):**
+```json
+{
+  "page": {
+    "items": [
+      { "id": 1, "name": "MacBook", "price": 14999, "category": "电子" },
+      { "id": 2, "name": "iPhone", "price": 8999, "category": "电子" }
+    ],
+    "page": 1,
+    "size": 10,
+    "total": 100
+  },
+  "total": 100,
+  "note": "泛型 Record PageResult<T> 保留类型信息，可安全使用"
+}
+```
+
+**响应示例 (`/validation`):**
+```json
+{
+  "validEmail": "admin@example.com",
+  "invalidEmailResult": "验证失败: 无效邮箱: invalid-email",
+  "note": "Compact constructor 中验证，确保 Record 对象始终有效（不可变 + 有效 = 安全）"
+}
+```
+
+**响应示例 (`/nested`):**
+```json
+{
+  "customer": {
+    "id": 100, "name": "张三",
+    "email": { "value": "zhangsan@example.com" },
+    "address": { "city": "北京", "street": "长安街 100 号", "zipCode": "100000" }
+  },
+  "city": "北京",
+  "email": "zhangsan@example.com",
+  "note": "嵌套 Record 通过 .a().b().c() 链式访问，深层不可变"
+}
+```
+
+**响应示例 (`/streams`):**
+```json
+{
+  "summaries": [
+    { "category": "电子", "count": 3, "totalPrice": 28997 },
+    { "category": "配件", "count": 2, "totalPrice": 2148 }
+  ],
+  "topCategory": "热销品类: 电子 (销量:3, 金额:28997)",
+  "note": "Record 作为 Stream 中间类型 → 不可变、语义清晰、支持 pattern matching 解构"
+}
+```
+
+**响应示例 (`/serialization`):**
+```json
+{
+  "original": {
+    "id": 1, "name": "李四",
+    "email": { "value": "lisi@example.com" },
+    "address": { "city": "上海", "street": "南京路 200 号", "zipCode": "200000" }
+  },
+  "json": "{\"id\":1,\"name\":\"李四\",\"email\":{\"value\":\"lisi@example.com\"},\"address\":{\"city\":\"上海\",\"street\":\"南京路 200 号\",\"zipCode\":\"200000\"}}",
+  "roundtripEquals": true,
+  "note": "Jackson 2.12+ 原生支持 Record 序列化/反序列化，无需额外注解"
+}
+```
+
+**响应示例 (`/local`):**
+```json
+{
+  "scores": [{ "name": "Alice", "score": 95 }, { "name": "Bob", "score": 87 }, { "name": "Charlie", "score": 92 }],
+  "ranked": [{ "name": "Alice", "score": 95 }, { "name": "Charlie", "score": 92 }, { "name": "Bob", "score": 87 }],
+  "note": "方法内定义的 Local Record，适合临时数据结构 — 不要为一次性使用污染类层级"
+}
+```
+
+**对比端点:**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/java21/record/compare-pojo` | 传统 POJO（~40 行）vs Record（1 行）深度对比 |
+
+**对比响应示例 (`/compare-pojo`):**
+```json
+{
+  "pojo": {
+    "definition": "public class ProductPOJO { private final Long id; ... }",
+    "linesOfCode": "~40 行",
+    "hashCode": 123456,
+    "note": "需要手写/IDE 生成: 构造器、getter、equals、hashCode、toString"
+  },
+  "record": {
+    "definition": "record ProductRecord(Long id, String name, ...) {}",
+    "linesOfCode": "1 行",
+    "hashCode": 123456,
+    "note": "自动生成: 规范构造器、访问器方法、equals、hashCode、toString"
+  },
+  "comparison": {
+    "immutability": "POJO 可用 final 字段模拟 | Record 天生不可变",
+    "boilerplate": "POJO ~40行样板代码 | Record 1行",
+    "serialization": "POJO 需注解 | Record Jackson 2.12+ 原生支持",
+    "threadSafety": "POJO 需自行保证 | Record 不可变 → 天然线程安全"
+  }
+}
+```
+
+---
+
 ## Architecture and Key Components
 
 ### Virtual Thread Configuration
@@ -758,12 +1596,20 @@ The project is configured to connect to a local PostgreSQL database:
   - `ReconciliationController.java` - 对帐端点
 - `src/main/java/org/example/scheduler/` - Scheduled tasks
   - `ReconciliationScheduler.java` - 每日自动对帐（支付宝2:00，微信3:00，健康监控每30分钟）
-- `src/main/java/org/example/security/` - Spring Security configuration
-  - `SecurityConfig.java` - 主安全配置（OAuth2 + JWT + HTTP Basic）
-  - `RedisTokenStoreConfig.java` - Redis OAuth2 token存储
-  - `AuthorizationServerConfig.java` - OAuth2授权服务器配置
-  - `filter/CaptchaValidationFilter.java` - 验证码校验过滤器
+- `src/main/java/org/example/security/` - Spring Security 配置
+  - `SecurityConfig.java` - 主安全配置（JWT 资源服务器 + HTTP Basic）
+  - `RedisTokenStoreConfig.java` - Redis OAuth2 token 存储（含 JavaTimeModule 序列化）
+  - `AuthorizationServerConfig.java` - OAuth2 授权服务器配置（密码模式 + JWT 签名 + RSA 密钥）
+  - `filter/CaptchaValidationFilter.java` - 验证码校验过滤器（集成到 OAuth2 token 端点）
   - `service/CustomUserDetailsService.java` - 自定义用户详情服务
+  - `authentication/` - 自定义密码模式认证
+    - `OAuth2PasswordAuthenticationToken.java` - 密码模式认证令牌
+    - `OAuth2PasswordAuthenticationConverter.java` - HTTP 请求 → 认证令牌转换器
+    - `OAuth2PasswordAuthenticationProvider.java` - 密码模式认证提供者（用户认证 → JWT 生成 → Redis 存储）
+- `src/main/java/org/springframework/security/` - Spring Security 7.x 兼容桥接
+  - `config/annotation/ObjectPostProcessor.java` - ObjectPostProcessor 包路径桥接
+  - `web/util/matcher/RequestVariablesExtractor.java` - 已移除接口桥接
+  - `web/util/matcher/AntPathRequestMatcher.java` - 已移除类桥接（基于 AntPathMatcher）
 - `src/main/resources/application.yml` - 应用配置
 - `src/main/resources/schema.sql` - 数据库表结构（用户/RBAC/支付/对帐共10张表）
 - `src/main/resources/data.sql` - 初始数据
@@ -772,7 +1618,9 @@ The project is configured to connect to a local PostgreSQL database:
 - Spring Boot 4.1.0-M3 with `spring-boot-starter-web`
 - `spring-boot-starter-data-jpa` for database access
 - `spring-boot-starter-data-redis` for Redis connectivity
-- `spring-boot-starter-security` + `spring-security-oauth2-authorization-server` for OAuth2
+- `spring-boot-starter-security` + `spring-boot-starter-oauth2-resource-server` for Security
+- `spring-security-oauth2-authorization-server` 1.5.1 for OAuth2 Authorization Server
+- `jackson-datatype-jsr310` for Java 8 date/time serialization in Redis
 - `spring-boot-starter-validation` for request validation
 - `mybatis-plus-spring-boot3-starter` 3.5.10 for ORM
 - `postgresql` driver for PostgreSQL connectivity
@@ -783,7 +1631,7 @@ The project is configured to connect to a local PostgreSQL database:
 
 1. **Spring Boot 4 Milestone Release** - This project uses Spring Boot 4.1.0-M3, which is a milestone release.
 
-2. **Java 21** - The project requires Java 21. Virtual threads are a standard feature in Java 21+.
+2. **Java 25** - The project requires Java 25. Virtual threads are a standard feature in Java 21+.
 
 3. **Virtual Threads** - Virtual threads are configured via both Java config and YAML. All `@Async` methods use the `taskExecutor` virtual thread executor.
 
@@ -793,9 +1641,9 @@ The project is configured to connect to a local PostgreSQL database:
 
 6. **RBAC** - Complete RBAC with User/Role/Permission entities and many-to-many associations.
 
-7. **Captcha** - 图形验证码使用 Java 2D API 生成 PNG，Redis 存储（5分钟有效期），4位字符含干扰线/噪点。
+7. **Captcha** - 点击汉字顺序验证码，使用 Java 2D API 生成 350×180 PNG 图片。随机散布 2 个目标汉字 + 2~3 个干扰汉字，含贝塞尔干扰线、噪点、随机旋转。Redis 存储字符坐标（5分钟有效期），支持文本验证和坐标验证（容差 40px）。
 
-8. **Redis Token Storage** - OAuth2 tokens 存储在 Redis，支持分布式部署。
+8. **OAuth2 认证** - 基于 Spring Authorization Server 1.5.1。支持 password、client_credentials、refresh_token、authorization_code 四种授权模式。客户端凭据通过 BCrypt 哈希存储（web-client:secret / api-client:api-secret）。JWT 使用 RSA 2048 密钥对签名，JWK Set 暴露在 `/oauth2/jwks`。Token 通过 Redis 持久化支持分布式部署。自定义密码模式集成验证码校验，验证码参数（captcha_key + captcha_code）在 CaptchaValidationFilter 中校验。包含 3 个 Spring Security 7.x 兼容桥接类：ObjectPostProcessor、AntPathRequestMatcher、RequestVariablesExtractor。
 
 9. **Payment Module** - 支付宝页面支付 + 微信Native扫码支付。使用 RSA2 签名直接调用 REST API，无 SDK 依赖。所有支付操作使用虚拟线程。
 
@@ -803,7 +1651,9 @@ The project is configured to connect to a local PostgreSQL database:
 
 11. **Security** - 支付回调使用 RSA2/SHA256withRSA 验签，微信支付使用 APIv3 签名认证。密钥通过环境变量注入，无硬编码。
 
-12. **Database Tables** - `schema.sql` 自动创建 10 张表（启动时 `mode: always`）:
+12. **JVM Monitor** - JVM 监控端点（`/api/monitor/jvm/*`），基于 `java.lang.management` MXBeans 提供堆内存、虚拟线程/平台线程统计、GC 详情、线程转储等实时数据，无需外部依赖。所有监控端点需要认证。
+
+13. **Database Tables** - `schema.sql` 自动创建 10 张表（启动时 `mode: always`）:
     - `sys_user`, `sys_role`, `sys_permission`, `sys_user_role`, `sys_role_permission`
     - `payment_order`, `reconciliation_record`, `reconciliation_detail`
     

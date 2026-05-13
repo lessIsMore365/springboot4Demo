@@ -3,6 +3,7 @@ package org.example.scheduler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.entity.ReconciliationRecord;
+import org.example.service.PaymentService;
 import org.example.service.ReconciliationService;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -19,6 +20,26 @@ import java.time.LocalDate;
 public class ReconciliationScheduler {
 
     private final ReconciliationService reconciliationService;
+    private final PaymentService paymentService;
+
+    /**
+     * 自动关闭超时未支付订单
+     * 每5分钟执行一次，关闭创建超过45分钟仍未支付的订单
+     */
+    @Scheduled(cron = "0 */5 * * * ?")
+    public void autoCloseExpiredOrders() {
+        Thread currentThread = Thread.currentThread();
+        log.debug("扫描超时未支付订单 - 线程: {}, 虚拟线程: {}", currentThread, currentThread.isVirtual());
+
+        try {
+            int closedCount = paymentService.closeExpiredOrders();
+            if (closedCount > 0) {
+                log.warn("自动关闭 {} 笔超时未支付订单（超过45分钟）", closedCount);
+            }
+        } catch (Exception e) {
+            log.error("自动关闭超时订单失败", e);
+        }
+    }
 
     /**
      * 每日自动对帐 - 支付宝

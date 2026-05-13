@@ -83,4 +83,10 @@ public interface PaymentService {
      * 异步创建支付订单 - 虚拟线程
      */
     CompletableFuture<Map<String, Object>> createPaymentAsync(String subject, String body, BigDecimal amount, String paymentMethod);
+
+    /**
+     * 自动关闭超时未支付订单（超过45分钟）
+     * @return 关闭的订单数量
+     */
+    int closeExpiredOrders();
 }

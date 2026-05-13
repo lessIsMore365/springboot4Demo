@@ -1,6 +1,7 @@
 package org.example.security.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
@@ -33,11 +34,13 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Configuration
-@RequiredArgsConstructor
 public class RedisTokenStoreConfig {
 
     private final RedisConnectionFactory redisConnectionFactory;
-    private final ObjectMapper objectMapper;
+
+    public RedisTokenStoreConfig(RedisConnectionFactory redisConnectionFactory) {
+        this.redisConnectionFactory = redisConnectionFactory;
+    }
 
     /**
      * 创建RedisTemplate用于存储OAuth2授权信息
@@ -59,7 +62,8 @@ public class RedisTokenStoreConfig {
                 new Jackson2JsonRedisSerializer<>(OAuth2Authorization.class);
 
         // 配置ObjectMapper以支持OAuth2Authorization序列化
-        ObjectMapper mapper = objectMapper.copy();
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new JavaTimeModule());
         mapper.registerModules(SecurityJackson2Modules.getModules(getClass().getClassLoader()));
         mapper.registerModule(new OAuth2AuthorizationServerJackson2Module());
         serializer.setObjectMapper(mapper);

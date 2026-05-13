@@ -58,6 +58,7 @@ public class SecurityConfig {
                                 "/api/auth/captcha/verify",
                                 "/api/auth/health",
                                 "/api/payment/notify/**",
+                                "/api/monitor/db/health",
                                 "/.well-known/**"
                         ).permitAll()
                         .anyRequest().authenticated()

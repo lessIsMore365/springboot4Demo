@@ -1202,6 +1202,194 @@ GC 详情 - 各收集器详细指标 + 最近 GC 内存变化 + 异常告警
 
 ---
 
+### 12b. 数据库监控端点（需要认证）
+
+数据库监控端点，提供连接池状态、表空间统计、延迟测试等实时数据。
+
+#### `GET /api/monitor/db/overview`
+数据库综合概览 — DB 元信息 + 连接池状态 + 健康检查
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "db": {
+      "productName": "PostgreSQL",
+      "productVersion": "14.20",
+      "driverName": "PostgreSQL JDBC Driver",
+      "driverVersion": "42.7.10",
+      "jdbcUrl": "jdbc:postgresql://127.0.0.1:5432/postgres",
+      "username": "xz",
+      "defaultTransactionIsolation": "READ_COMMITTED",
+      "supportsBatchUpdates": true,
+      "supportsSavepoints": true,
+      "supportsStoredProcedures": true,
+      "maxConnections": 100,
+      "catalog": "postgres",
+      "schema": "public"
+    },
+    "pool": {
+      "poolName": "HikariPool-1",
+      "activeConnections": 2,
+      "idleConnections": 8,
+      "totalConnections": 10,
+      "threadsAwaitingConnection": 0,
+      "maxPoolSize": 50,
+      "minIdle": 10,
+      "usagePercent": 4.0,
+      "connectionTimeoutMs": 30000,
+      "idleTimeoutMs": 600000,
+      "maxLifetimeMs": 1800000,
+      "keepaliveTimeMs": 30000
+    },
+    "health": "HEALTHY",
+    "timestamp": 1700000000000
+  },
+  "timestamp": 1700000000000
+}
+```
+
+**字段说明:**
+| 字段 | 说明 |
+|------|------|
+| `db.productName` | 数据库产品名 |
+| `db.maxConnections` | 数据库允许的最大连接数 |
+| `db.defaultTransactionIsolation` | 默认事务隔离级别 |
+| `pool.activeConnections` | 活跃连接数 |
+| `pool.idleConnections` | 空闲连接数 |
+| `pool.threadsAwaitingConnection` | 等待获取连接的线程数 |
+| `pool.usagePercent` | 连接池使用率 = active / max |
+| `health` | 健康状态: `HEALTHY` / `UNHEALTHY` / `DOWN: ...` |
+
+---
+
+#### `GET /api/monitor/db/pool`
+连接池详情 — 含累计统计（超时次数、创建总数等）
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "pool": {
+      "poolName": "HikariPool-1",
+      "activeConnections": 2,
+      "idleConnections": 8,
+      "totalConnections": 10,
+      "threadsAwaitingConnection": 0,
+      "maxPoolSize": 50,
+      "minIdle": 10,
+      "usagePercent": 4.0,
+      "connectionTimeoutMs": 30000,
+      "idleTimeoutMs": 600000,
+      "maxLifetimeMs": 1800000,
+      "keepaliveTimeMs": 30000
+    },
+    "cumulative": {
+      "totalConnectionsCreated": 15,
+      "totalConnectionsClosed": 5,
+      "totalConnectionTimeouts": 0,
+      "totalFailedValidations": 0
+    },
+    "uptimeMs": 3600000,
+    "uptimeFormatted": "1h 0m 0s"
+  },
+  "timestamp": 1700000000000
+}
+```
+
+---
+
+#### `GET /api/monitor/db/tables`
+表统计 — 所有用户表的行数、空间占用（表/索引/总计）、扫描统计、增删改统计、VACUUM/ANALYZE 时间
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "schemaName": "public",
+      "tableName": "payment_order",
+      "tableType": "TABLE",
+      "rowCountEstimate": 5,
+      "totalSize": "112 kB",
+      "tableSize": "16 kB",
+      "indexSize": "96 kB",
+      "indexCount": 4,
+      "seqScans": 915,
+      "idxScans": 352,
+      "nTupIns": 5,
+      "nTupUpd": 1,
+      "nTupDel": 0,
+      "nLiveTup": 5,
+      "nDeadTup": 0,
+      "lastVacuum": "-",
+      "lastAnalyze": "-"
+    }
+  ],
+  "timestamp": 1700000000000
+}
+```
+
+**字段说明:**
+| 字段 | 说明 |
+|------|------|
+| `rowCountEstimate` | 估计行数（`n_live_tup`，MVCC 近似值） |
+| `totalSize` | 总占用空间（表 + 索引） |
+| `tableSize` | 表数据占用空间 |
+| `indexSize` | 索引占用空间 |
+| `indexCount` | 索引数量 |
+| `seqScans` | 全表扫描次数 |
+| `idxScans` | 索引扫描次数 |
+| `nTupIns/Upd/Del` | 累计插入/更新/删除行数 |
+| `nLiveTup` | 活跃行数 |
+| `nDeadTup` | 死行数（待 VACUUM 回收） |
+| `lastVacuum` | 上次 VACUUM 时间 |
+| `lastAnalyze` | 上次 ANALYZE 时间 |
+
+> **注意**: `nDeadTup` 过高说明需要 VACUUM，可能导致表膨胀影响性能。表按总空间降序排列。
+
+---
+
+#### `GET /api/monitor/db/latency`
+连接延迟测试 — 获取连接 + 有效性验证耗时
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "latencyMs": 0,
+    "valid": true,
+    "timeoutMs": 5,
+    "result": "OK (0ms)"
+  },
+  "timestamp": 1700000000000
+}
+```
+
+---
+
+#### `GET /api/monitor/db/health`（公开）
+数据库监控服务健康检查
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "status": "UP",
+    "service": "数据库监控服务",
+    "timestamp": 1700000000000
+  },
+  "timestamp": 1700000000000
+}
+```
+
+---
+
 ### 13. Java 21+ 新特性演示端点（学习用，需要认证）
 
 Spring Boot 4 / Java 21+ 五大新特性交互式演示。所有端点**需要认证**（Bearer Token），返回 JSON。

@@ -842,10 +842,50 @@ JVM 综合概览，一次调用获取全部关键指标
       "peakCount": 52,
       "totalStarted": 523
     },
-    "gc": [
-      {"name": "G1 Young Generation", "collectionCount": 15, "collectionTimeMs": 320},
-      {"name": "G1 Old Generation", "collectionCount": 3, "collectionTimeMs": 180}
-    ]
+    "gc": {
+      "collectors": [
+        {
+          "name": "G1 Young Generation",
+          "collectionCount": 15,
+          "collectionTimeMs": 320,
+          "avgTimeMs": 21.3,
+          "collectionsPerHour": 12.5,
+          "memoryPoolNames": ["G1 Eden Space", "G1 Survivor Space", "G1 Old Gen"],
+          "lastGc": {
+            "id": 15,
+            "startTime": 27417,
+            "endTime": 27422,
+            "durationMs": 5,
+            "elapsedSinceMs": 125000,
+            "pools": {
+              "G1 Eden Space": {
+                "usedBefore": 35651584,
+                "usedAfter": 0,
+                "committed": 37748736,
+                "max": 37748736,
+                "freedBytes": 35651584,
+                "usageBeforePercent": 94.4,
+                "usageAfterPercent": 0.0
+              },
+              "G1 Old Gen": {
+                "usedBefore": 36807912,
+                "usedAfter": 37572248,
+                "committed": 44040192,
+                "max": 4294967296,
+                "freedBytes": -764336,
+                "usageBeforePercent": 0.86,
+                "usageAfterPercent": 0.87
+              }
+            }
+          }
+        }
+      ],
+      "warnings": {
+        "hasWarning": false,
+        "severity": "NORMAL",
+        "warnings": []
+      }
+    }
   },
   "timestamp": 1700000000000
 }
@@ -861,8 +901,17 @@ JVM 综合概览，一次调用获取全部关键指标
 | `threads.virtualCount` | 虚拟线程数（名称以 `VirtualThread[` 开头） |
 | `threads.platformCount` | 平台线程数 |
 | `threads.peakCount` | 线程峰值（自 JVM 启动以来） |
-| `gc[].collectionCount` | GC 收集次数 |
-| `gc[].collectionTimeMs` | GC 总耗时 (ms) |
+| `gc.collectors` | GC 收集器详情列表 |
+| `gc.collectors[].avgTimeMs` | 平均每次 GC 耗时 (ms) |
+| `gc.collectors[].collectionsPerHour` | GC 频率（次/小时） |
+| `gc.collectors[].memoryPoolNames` | 该收集器管理的内存池 |
+| `gc.collectors[].lastGc` | 最近一次 GC 快照（null 表示暂无） |
+| `gc.collectors[].lastGc.durationMs` | 本次 GC 暂停时间 (ms) |
+| `gc.collectors[].lastGc.pools` | 各内存池 GC 前后使用量变化 |
+| `gc.collectors[].lastGc.pools.{name}.freedBytes` | 该内存池释放的字节数（负数=增加） |
+| `gc.warnings.hasWarning` | 是否存在 GC 异常 |
+| `gc.warnings.severity` | 严重级别: `NORMAL` / `WARN` / `SEVERE` |
+| `gc.warnings.warnings` | 异常告警详情列表 |
 
 ---
 
@@ -986,19 +1035,170 @@ JVM 综合概览，一次调用获取全部关键指标
 ---
 
 #### `GET /api/monitor/jvm/gc`
-GC 详情 - 各垃圾收集器的回收次数和总耗时
+GC 详情 - 各收集器详细指标 + 最近 GC 内存变化 + 异常告警
 
-**响应示例:**
+**响应示例（正常）:**
 ```json
 {
   "success": true,
-  "data": [
-    {"name": "G1 Young Generation", "collectionCount": 15, "collectionTimeMs": 320},
-    {"name": "G1 Old Generation", "collectionCount": 3, "collectionTimeMs": 180}
-  ],
+  "data": {
+    "collectors": [
+      {
+        "name": "G1 Young Generation",
+        "collectionCount": 15,
+        "collectionTimeMs": 320,
+        "avgTimeMs": 21.3,
+        "collectionsPerHour": 12.5,
+        "memoryPoolNames": ["G1 Eden Space", "G1 Survivor Space", "G1 Old Gen"],
+        "lastGc": {
+          "id": 15,
+          "startTime": 27417,
+          "endTime": 27422,
+          "durationMs": 5,
+          "elapsedSinceMs": 125000,
+          "pools": {
+            "G1 Eden Space": {
+              "usedBefore": 35651584,
+              "usedAfter": 0,
+              "committed": 37748736,
+              "max": 37748736,
+              "freedBytes": 35651584,
+              "usageBeforePercent": 94.4,
+              "usageAfterPercent": 0.0
+            },
+            "G1 Old Gen": {
+              "usedBefore": 36807912,
+              "usedAfter": 37572248,
+              "committed": 44040192,
+              "max": 4294967296,
+              "freedBytes": -764336,
+              "usageBeforePercent": 0.86,
+              "usageAfterPercent": 0.87
+            }
+          }
+        }
+      },
+      {
+        "name": "G1 Old Generation",
+        "collectionCount": 0,
+        "collectionTimeMs": 0,
+        "avgTimeMs": 0.0,
+        "collectionsPerHour": 0.0,
+        "memoryPoolNames": ["G1 Eden Space", "G1 Survivor Space", "G1 Old Gen"],
+        "lastGc": null
+      }
+    ],
+    "warnings": {
+      "hasWarning": false,
+      "severity": "NORMAL",
+      "warnings": []
+    },
+    "timestamp": 1700000000000
+  },
   "timestamp": 1700000000000
 }
 ```
+
+**响应示例（存在异常 GC）:**
+```json
+{
+  "success": true,
+  "data": {
+    "collectors": [
+      {
+        "name": "G1 Young Generation",
+        "collectionCount": 1520,
+        "collectionTimeMs": 18240,
+        "avgTimeMs": 12.0,
+        "collectionsPerHour": 180.5,
+        "memoryPoolNames": ["G1 Eden Space", "G1 Survivor Space", "G1 Old Gen"],
+        "lastGc": {
+          "id": 1520,
+          "durationMs": 8,
+          "elapsedSinceMs": 5000,
+          "pools": {
+            "G1 Old Gen": {
+              "usedBefore": 3145728000,
+              "usedAfter": 2936012800,
+              "committed": 4294967296,
+              "max": 4294967296,
+              "freedBytes": 209715200,
+              "usageBeforePercent": 73.2,
+              "usageAfterPercent": 68.4
+            }
+          }
+        }
+      },
+      {
+        "name": "G1 Old Generation",
+        "collectionCount": 45,
+        "collectionTimeMs": 135000,
+        "avgTimeMs": 3000.0,
+        "collectionsPerHour": 5.3,
+        "memoryPoolNames": ["G1 Eden Space", "G1 Survivor Space", "G1 Old Gen"],
+        "lastGc": {
+          "id": 45,
+          "durationMs": 3200,
+          "elapsedSinceMs": 30000,
+          "pools": {
+            "G1 Old Gen": {
+              "usedBefore": 4080218931,
+              "usedAfter": 3865470566,
+              "committed": 4294967296,
+              "max": 4294967296,
+              "freedBytes": 214748365,
+              "usageBeforePercent": 95.0,
+              "usageAfterPercent": 90.0
+            }
+          }
+        }
+      }
+    ],
+    "warnings": {
+      "hasWarning": true,
+      "severity": "SEVERE",
+      "warnings": [
+        "Full GC 较频繁: G1 Old Generation 收集器 5.3 次/小时（阈值 >5），已收集 45 次，建议检查堆内存配置",
+        "Full GC 平均暂停时间长: G1 Old Generation 平均 3000.0 ms/次（阈值 >2000 ms），可能导致请求超时",
+        "Full GC 效果不佳: G1 Old Generation 回收后 G1 Old Gen 使用率仍达 90.0%（已用 3.6GB/4.0GB），总释放 2.7GB，建议增大堆内存"
+      ]
+    },
+    "timestamp": 1700000000000
+  },
+  "timestamp": 1700000000000
+}
+```
+
+**字段说明:**
+
+| 字段 | 说明 |
+|------|------|
+| `collectors[].avgTimeMs` | 平均每次 GC 耗时 (ms) |
+| `collectors[].collectionsPerHour` | GC 频率（次/小时，基于 JVM 运行时间） |
+| `collectors[].memoryPoolNames` | 该收集器管理的内存池名称 |
+| `collectors[].lastGc` | 最近一次 GC 快照，`null` 表示该收集器尚未执行过 GC |
+| `lastGc.durationMs` | 本次 GC 暂停时间 (ms) |
+| `lastGc.elapsedSinceMs` | 距本次 GC 已过时间 (ms) |
+| `lastGc.pools.{pool}.freedBytes` | 该内存池释放的字节数（负数表示增加） |
+| `lastGc.pools.{pool}.usageBeforePercent` | GC 前使用率 (%) |
+| `lastGc.pools.{pool}.usageAfterPercent` | GC 后使用率 (%) |
+
+**异常 GC 告警规则:**
+
+| 告警条件 | 严重级别 | 说明 |
+|----------|----------|------|
+| Young GC > 120 次/小时 | WARN | 对象分配过快或 Eden 区过小 |
+| Full GC > 5 次/小时 | WARN | 可能存在内存泄漏或堆不足 |
+| Full GC > 10 次/小时 | SEVERE | 频繁 Full GC，严重影响性能 |
+| Young GC 平均 > 200ms | WARN | 新生代 GC 耗时偏高 |
+| Young GC 平均 > 500ms | WARN | 新生代 GC 严重耗时 |
+| Full GC 平均 > 2000ms | WARN | Full GC 暂停过长，可能导致请求超时 |
+| GC 总开销 > 10% | WARN | GC 占用过多 CPU 时间 |
+| GC 总开销 > 20% | SEVERE | GC 严重拖慢应用 |
+| Full GC 后老年代 > 85% | WARN | 回收效果差，建议增大堆或排查泄漏 |
+| 距上次 GC > 10 分钟 | WARN | GC 可能已停止工作 |
+
+> **注意**: JVM 启动不足 5 分钟时，频率类告警自动抑制（启动阶段 GC 自然频繁）。G1 Concurrent GC 等并发标记不计入 Full GC 告警。
 
 ---
 

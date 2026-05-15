@@ -1390,6 +1390,286 @@ GC 详情 - 各收集器详细指标 + 最近 GC 内存变化 + 异常告警
 
 ---
 
+### 12c. 服务器监控端点（需要认证，health 端点公开）
+
+服务器级监控端点，提供操作系统级指标：CPU、内存、磁盘、网络、进程。跨平台支持 Linux 和 macOS，Linux 生产环境通过 `/proc` 文件系统获取详细指标。
+
+基础路径: `/api/monitor/server`
+
+#### `GET /api/monitor/server/health`（公开）
+服务器监控服务健康检查
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "status": "UP",
+    "service": "服务器监控服务",
+    "timestamp": 1700000000000
+  },
+  "timestamp": 1700000000000
+}
+```
+
+---
+
+#### `GET /api/monitor/server/overview`
+服务器综合概览 — OS + CPU + 内存 + 磁盘 + 网络 + 进程
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "os": {
+      "name": "Linux",
+      "version": "5.15.0-91-generic",
+      "arch": "amd64",
+      "hostname": "production-server-01",
+      "uptimeMs": 86400000,
+      "uptimeFormatted": "1d 0h 0m",
+      "availableProcessors": 16,
+      "systemLoadAverage": 2.5,
+      "jvmVendor": "Oracle Corporation",
+      "jvmVersion": "25.0.3"
+    },
+    "cpu": {
+      "systemCpuLoadPercent": 23.5,
+      "processCpuLoadPercent": 1.2,
+      "systemLoadAverage": 2.5,
+      "availableProcessors": 16,
+      "physicalCores": 8,
+      "logicalCores": 16,
+      "cpuModel": "Intel(R) Xeon(R) Platinum 8375C CPU @ 2.90GHz"
+    },
+    "memory": {
+      "totalPhysical": 34359738368,
+      "freePhysical": 8589934592,
+      "usedPhysical": 25769803776,
+      "usedPercent": 75.0,
+      "totalSwap": 17179869184,
+      "freeSwap": 12884901888,
+      "usedSwap": 4294967296,
+      "swapUsedPercent": 25.0,
+      "committedVirtualMemory": 42949672960,
+      "processRss": 536870912,
+      "processVms": 10737418240
+    },
+    "disks": [
+      {
+        "mountPoint": "/",
+        "filesystem": "ext4",
+        "totalBytes": 107374182400,
+        "freeBytes": 53687091200,
+        "usableBytes": 48318382080,
+        "usedBytes": 53687091200,
+        "usedPercent": 50.0,
+        "totalDisplay": "100.0 GB",
+        "usedDisplay": "50.0 GB",
+        "freeDisplay": "50.0 GB"
+      }
+    ],
+    "networks": [
+      {
+        "name": "eth0",
+        "displayName": "eth0",
+        "up": true,
+        "virtual": false,
+        "loopback": false,
+        "macAddress": "00:15:5d:01:02:03",
+        "ipAddresses": ["192.168.1.100", "fe80::215:5dff:fe01:203"],
+        "bytesReceived": 1073741824,
+        "bytesSent": 536870912,
+        "packetsReceived": 1000000,
+        "packetsSent": 800000,
+        "errorsIn": 0,
+        "errorsOut": 0,
+        "dropIn": 0,
+        "dropOut": 0
+      }
+    ],
+    "process": {
+      "pid": 12345,
+      "processName": "java",
+      "cpuLoadPercent": 1.2,
+      "rssBytes": 536870912,
+      "vmsBytes": 10737418240,
+      "openFileDescriptors": 128,
+      "maxFileDescriptors": 65536,
+      "threadCount": 42,
+      "startTime": "2026-05-10T10:30:00",
+      "user": "appuser",
+      "command": "/usr/bin/java -jar app.jar"
+    },
+    "timestamp": 1700000000000
+  },
+  "timestamp": 1700000000000
+}
+```
+
+**字段说明:**
+| 字段 | 说明 |
+|------|------|
+| `os.uptimeMs` | OS 运行时长 (ms)，Linux 从 `/proc/uptime`，macOS 从 `sysctl kern.boottime` |
+| `os.systemLoadAverage` | 一分钟系统平均负载 |
+| `cpu.systemCpuLoadPercent` | 系统级 CPU 使用率 (%) |
+| `cpu.processCpuLoadPercent` | 当前 Java 进程 CPU 使用率 (%) |
+| `cpu.physicalCores` | 物理核心数，Linux 从 `/proc/cpuinfo`，macOS 从 `sysctl hw.physicalcpu` |
+| `cpu.logicalCores` | 逻辑核心数（含超线程） |
+| `memory.totalPhysical` / `freePhysical` | 物理内存总量/空闲 (bytes) |
+| `memory.totalSwap` / `freeSwap` | Swap 总量/空闲 (bytes) |
+| `memory.processRss` | 当前进程物理内存占用 (bytes)，Linux 从 `/proc/self/status` |
+| `memory.processVms` | 当前进程虚拟内存占用 (bytes) |
+| `disks[].mountPoint` | 挂载点，按使用率降序排列 |
+| `disks[].filesystem` | 文件系统类型，Linux 从 `/proc/mounts` |
+| `networks[].bytesReceived` / `bytesSent` | 接口流量统计，Linux 从 `/proc/net/dev`，macOS 从 `netstat -ibn` |
+| `process.openFileDescriptors` | 当前进程打开的文件描述符数，Linux 从 `/proc/self/fd`，macOS 从 `lsof` |
+| `process.maxFileDescriptors` | 系统最大文件描述符数，Linux 从 `/proc/self/limits`，macOS 从 `launchctl limit maxfiles` |
+
+---
+
+#### `GET /api/monitor/server/cpu`
+CPU 详情 — 使用率 + 负载 + 每核负载
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "summary": {
+      "systemCpuLoadPercent": 23.5,
+      "processCpuLoadPercent": 1.2,
+      "systemLoadAverage": 2.5,
+      "availableProcessors": 16,
+      "physicalCores": 8,
+      "logicalCores": 16,
+      "cpuModel": "Intel(R) Xeon(R) Platinum 8375C CPU @ 2.90GHz"
+    },
+    "perCoreLoad": [
+      {"coreIndex": 0, "loadPercent": 25.0},
+      {"coreIndex": 1, "loadPercent": 10.5}
+    ]
+  },
+  "timestamp": 1700000000000
+}
+```
+
+**说明:** `perCoreLoad` 仅在 Linux 下可用（解析 `/proc/stat`），macOS 返回空数组。
+
+---
+
+#### `GET /api/monitor/server/memory`
+内存详情 — 物理内存 + Swap + JVM 堆
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "summary": {
+      "totalPhysical": 34359738368,
+      "freePhysical": 8589934592,
+      "usedPhysical": 25769803776,
+      "usedPercent": 75.0,
+      "totalSwap": 17179869184,
+      "freeSwap": 12884901888,
+      "usedSwap": 4294967296,
+      "swapUsedPercent": 25.0,
+      "committedVirtualMemory": 42949672960,
+      "processRss": 536870912,
+      "processVms": 10737418240
+    },
+    "jvmHeapUsed": 268435456,
+    "jvmHeapMax": 4294967296,
+    "jvmHeapUsagePercent": 6.25
+  },
+  "timestamp": 1700000000000
+}
+```
+
+---
+
+#### `GET /api/monitor/server/disk`
+磁盘详情 — 各分区空间和使用率
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "mountPoint": "/",
+      "filesystem": "ext4",
+      "totalBytes": 107374182400,
+      "freeBytes": 53687091200,
+      "usableBytes": 48318382080,
+      "usedBytes": 53687091200,
+      "usedPercent": 50.0,
+      "totalDisplay": "100.0 GB",
+      "usedDisplay": "50.0 GB",
+      "freeDisplay": "50.0 GB"
+    },
+    {
+      "mountPoint": "/data",
+      "filesystem": "xfs",
+      "totalBytes": 536870912000,
+      "freeBytes": 214748364800,
+      "usableBytes": 198341857280,
+      "usedBytes": 322122547200,
+      "usedPercent": 60.0,
+      "totalDisplay": "500.0 GB",
+      "usedDisplay": "300.0 GB",
+      "freeDisplay": "200.0 GB"
+    }
+  ],
+  "timestamp": 1700000000000
+}
+```
+
+**说明:** 磁盘分区按使用率降序排列。`totalDisplay`/`usedDisplay`/`freeDisplay` 为可读格式。
+
+---
+
+#### `GET /api/monitor/server/network`
+网络详情 — 各接口流量统计
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "name": "eth0",
+      "displayName": "eth0",
+      "up": true,
+      "virtual": false,
+      "loopback": false,
+      "macAddress": "00:15:5d:01:02:03",
+      "ipAddresses": ["192.168.1.100", "fe80::215:5dff:fe01:203"],
+      "bytesReceived": 1073741824,
+      "bytesSent": 536870912,
+      "packetsReceived": 1000000,
+      "packetsSent": 800000,
+      "errorsIn": 0,
+      "errorsOut": 0,
+      "dropIn": 0,
+      "dropOut": 0
+    }
+  ],
+  "timestamp": 1700000000000
+}
+```
+
+**说明:**
+- 网络接口按总流量（接收+发送）降序排列
+- Linux 下 `bytesReceived`/`bytesSent` 等统计从 `/proc/net/dev` 读取
+- macOS 下从 `netstat -ibn` 读取
+- Java `NetworkInterface` API 提供接口名、IP、MAC、状态等信息
+- 子进程调用使用 5 秒超时保护，避免阻塞请求线程
+
+---
+
 ### 13. Java 21+ 新特性演示端点（学习用，需要认证）
 
 Spring Boot 4 / Java 21+ 五大新特性交互式演示。所有端点**需要认证**（Bearer Token），返回 JSON。
@@ -2037,11 +2317,15 @@ The project is configured to connect to a local PostgreSQL database:
 
 10. **Reconciliation** - 每日凌晨自动对帐。逐笔比对订单号/金额/状态，识别 MATCH/MISMATCH/LOCAL_ONLY/REMOTE_ONLY 四类差异。对帐结果持久化到数据库，支持历史查询和统计分析。
 
-11. **Security** - 支付回调使用 RSA2/SHA256withRSA 验签，微信支付使用 APIv3 签名认证。密钥通过环境变量注入，无硬编码。
+11. **Security** - 支付回调使用 RSA2/SHA256withRSA 验签，微信支付使用 APIv3 签名认证。密钥通过环境变量注入，无硬编码。公开端点：`/api/auth/*`、`/api/payment/notify/**`、`/api/monitor/db/health`、`/api/monitor/server/health`、`/.well-known/**`。
 
-12. **JVM Monitor** - JVM 监控端点（`/api/monitor/jvm/*`），基于 `java.lang.management` MXBeans 提供堆内存、虚拟线程/平台线程统计、GC 详情、线程转储等实时数据，无需外部依赖。所有监控端点需要认证。
+12. **JVM Monitor** - JVM 监控端点（`/api/monitor/jvm/*`），基于 `java.lang.management` MXBeans 提供堆内存、虚拟线程/平台线程统计、GC 详情、线程转储等实时数据，无需外部依赖。GC 监控含 10 条异常检测规则。所有监控端点需要认证。
 
-13. **Database Tables** - `schema.sql` 自动创建 10 张表（启动时 `mode: always`）:
+13. **Database Monitor** - 数据库监控端点（`/api/monitor/db/*`），基于 HikariCP `HikariPoolMXBean` + JMX 提供连接池实时统计（活跃/空闲/等待连接数），PostgreSQL `pg_stat_user_tables` 表统计分析（行数/大小/扫描/增删改），连接延迟检测。health 端点公开，其余需要认证。
+
+14. **Server Monitor** - 服务器监控端点（`/api/monitor/server/*`），跨平台（Linux/macOS）采集操作系统级指标。Linux 通过 `/proc` 文件系统获取 CPU、内存、网络统计，macOS 通过 `sysctl`/`netstat`/`ps` 等命令获取。health 端点公开，其余需要认证。
+
+15. **Database Tables** - `schema.sql` 自动创建 10 张表（启动时 `mode: always`）:
     - `sys_user`, `sys_role`, `sys_permission`, `sys_user_role`, `sys_role_permission`
     - `payment_order`, `reconciliation_record`, `reconciliation_detail`
     

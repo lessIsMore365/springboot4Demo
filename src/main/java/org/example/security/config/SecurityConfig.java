@@ -59,6 +59,7 @@ public class SecurityConfig {
                                 "/api/auth/health",
                                 "/api/payment/notify/**",
                                 "/api/monitor/db/health",
+                                "/api/monitor/server/health",
                                 "/.well-known/**"
                         ).permitAll()
                         .anyRequest().authenticated()

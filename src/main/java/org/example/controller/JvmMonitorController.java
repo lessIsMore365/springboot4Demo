@@ -84,4 +84,17 @@ public class JvmMonitorController {
                 "timestamp", System.currentTimeMillis()
         ));
     }
+
+    /**
+     * GC 事件历史 - 最近 GC 事件时间线 + Young/Full GC 分类统计（含暂停时间分布）
+     */
+    @GetMapping("/gc/history")
+    public ResponseEntity<Map<String, Object>> gcHistory() {
+        JvmMonitorService.GcHistory data = monitorService.getGcHistory();
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", data,
+                "timestamp", System.currentTimeMillis()
+        ));
+    }
 }

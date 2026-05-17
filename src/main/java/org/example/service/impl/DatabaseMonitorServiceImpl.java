@@ -3,6 +3,7 @@ package org.example.service.impl;
 import com.zaxxer.hikari.HikariDataSource;
 import com.zaxxer.hikari.HikariPoolMXBean;
 import lombok.extern.slf4j.Slf4j;
+import org.example.config.SlowSqlInterceptor;
 import org.example.service.DatabaseMonitorService;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -23,10 +24,13 @@ public class DatabaseMonitorServiceImpl implements DatabaseMonitorService {
 
     private final DataSource dataSource;
     private final JdbcTemplate jdbcTemplate;
+    private final SlowSqlInterceptor slowSqlInterceptor;
 
-    public DatabaseMonitorServiceImpl(DataSource dataSource, JdbcTemplate jdbcTemplate) {
+    public DatabaseMonitorServiceImpl(DataSource dataSource, JdbcTemplate jdbcTemplate,
+                                       SlowSqlInterceptor slowSqlInterceptor) {
         this.dataSource = dataSource;
         this.jdbcTemplate = jdbcTemplate;
+        this.slowSqlInterceptor = slowSqlInterceptor;
     }
 
     @Override
@@ -151,6 +155,30 @@ public class DatabaseMonitorServiceImpl implements DatabaseMonitorService {
         String result = valid ? "OK (" + latencyMs + "ms)" : "FAILED (" + latencyMs + "ms)";
 
         return new ConnectionLatency(latencyMs, valid, timeoutMs, result);
+    }
+
+    @Override
+    public SlowSqlSummary getSlowSqlStats() {
+        List<SlowSqlInterceptor.SlowSqlStat> interceptorStats = slowSqlInterceptor.getStats();
+        List<SlowSqlInterceptor.SlowSqlDetail> details = slowSqlInterceptor.getRecentSlowSqls();
+
+        List<SlowSqlStat> stats = interceptorStats.stream()
+                .map(s -> new SlowSqlStat(s.sql(), s.count(), s.totalTimeMs(), s.avgTimeMs(),
+                        s.maxTimeMs(), s.minTimeMs(), s.slowCount(), s.lastSlowTimeMs()))
+                .toList();
+
+        List<SlowSqlDetail> slowSqlDetails = details.stream()
+                .map(d -> new SlowSqlDetail(d.sql(), d.elapsedMs(), d.timestamp()))
+                .toList();
+
+        long totalSlowCount = stats.stream().mapToLong(SlowSqlStat::slowCount).sum();
+
+        return new SlowSqlSummary(stats, slowSqlDetails, slowSqlInterceptor.getThresholdMs(), totalSlowCount);
+    }
+
+    @Override
+    public void resetSlowSqlStats() {
+        slowSqlInterceptor.reset();
     }
 
     // ==================== 内部构建方法 ====================

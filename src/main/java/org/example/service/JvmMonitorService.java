@@ -24,6 +24,9 @@ public interface JvmMonitorService {
     /** 获取线程转储（所有线程及堆栈） */
     ThreadDump getThreadDump();
 
+    /** 获取 GC 事件历史（Young/Full GC 事件 + 暂停时间分布） */
+    GcHistory getGcHistory();
+
     // ==================== 数据模型 ====================
 
     record JvmOverview(
@@ -151,6 +154,44 @@ public interface JvmMonitorService {
             boolean hasWarning,
             String severity,
             List<String> warnings
+    ) {}
+
+    // ==================== GC 事件历史 ====================
+
+    /** 单次 GC 事件 */
+    record GcEvent(
+            long id,
+            String collectorName,
+            String gcAction,
+            String gcCause,
+            long startTime,
+            long endTime,
+            long durationMs,
+            long elapsedSinceJvmStartMs,
+            Map<String, MemoryPoolDelta> pools,
+            long recordedAt
+    ) {}
+
+    /** GC 事件历史（含分类统计） */
+    record GcHistory(
+            List<GcEvent> events,
+            GcStatistics youngGcStats,
+            GcStatistics fullGcStats,
+            int totalYoungGc,
+            int totalFullGc
+    ) {}
+
+    /** GC 分类统计（含暂停时间分布） */
+    record GcStatistics(
+            long count,
+            long totalTimeMs,
+            double avgTimeMs,
+            long maxPauseMs,
+            long minPauseMs,
+            long p50PauseMs,
+            long p95PauseMs,
+            long p99PauseMs,
+            long totalFreedBytes
     ) {}
 
     // ==================== Thread Dump ====================

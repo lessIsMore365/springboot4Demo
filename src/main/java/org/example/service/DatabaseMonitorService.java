@@ -20,6 +20,12 @@ public interface DatabaseMonitorService {
     /** 连接延迟测试 */
     ConnectionLatency testConnectionLatency();
 
+    /** 获取慢 SQL 统计 */
+    SlowSqlSummary getSlowSqlStats();
+
+    /** 重置慢 SQL 统计 */
+    void resetSlowSqlStats();
+
     // ==================== 数据模型 ====================
 
     record DatabaseOverview(
@@ -99,5 +105,29 @@ public interface DatabaseMonitorService {
             boolean valid,
             int timeoutMs,
             String result
+    ) {}
+
+    record SlowSqlStat(
+            String sql,
+            long count,
+            long totalTimeMs,
+            double avgTimeMs,
+            long maxTimeMs,
+            long minTimeMs,
+            long slowCount,
+            long lastSlowTimeMs
+    ) {}
+
+    record SlowSqlDetail(
+            String sql,
+            long elapsedMs,
+            long timestamp
+    ) {}
+
+    record SlowSqlSummary(
+            List<SlowSqlStat> stats,
+            List<SlowSqlDetail> recentSlowSqls,
+            long thresholdMs,
+            long totalSlowCount
     ) {}
 }

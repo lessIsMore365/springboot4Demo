@@ -1,12 +1,18 @@
 package org.example.service.impl;
 
+import com.sun.management.GarbageCollectionNotificationInfo;
 import com.sun.management.GcInfo;
 import lombok.extern.slf4j.Slf4j;
 import org.example.service.JvmMonitorService;
 import org.springframework.stereotype.Service;
 
+import javax.management.Notification;
+import javax.management.NotificationListener;
+import javax.management.NotificationEmitter;
+import javax.management.openmbean.CompositeData;
 import java.lang.management.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentLinkedDeque;
 
 /**
  * JVM 监控服务实现
@@ -31,6 +37,115 @@ public class JvmMonitorServiceImpl implements JvmMonitorService {
     private static final long YOUNG_GC_AVG_MS_WARN = 200;       // Young GC 平均 > 200ms
     private static final long ELAPSED_SINCE_GC_MS_WARN = 600_000; // 最近一次 GC 距今 > 10分钟
     private static final long MIN_UPTIME_MS_FOR_GC_CHECK = 300_000; // JVM 启动 ≥ 5分钟才做频率检测
+
+    // GC 事件历史
+    private final ConcurrentLinkedDeque<GcEvent> gcEvents = new ConcurrentLinkedDeque<>();
+    private final ConcurrentLinkedDeque<Long> youngGcPauseTimes = new ConcurrentLinkedDeque<>();
+    private final ConcurrentLinkedDeque<Long> fullGcPauseTimes = new ConcurrentLinkedDeque<>();
+    private static final int MAX_GC_EVENTS = 200;
+    private static final int MAX_PAUSE_SAMPLES = 1_000;
+
+    /**
+     * 注册 GC 通知监听器，实时捕获所有 GC 事件
+     */
+    @jakarta.annotation.PostConstruct
+    public void registerGcListeners() {
+        for (GarbageCollectorMXBean gcBean : ManagementFactory.getGarbageCollectorMXBeans()) {
+            if (gcBean instanceof NotificationEmitter emitter) {
+                emitter.addNotificationListener(new GcNotificationListener(), null, null);
+            }
+        }
+        log.info("GC notification listeners registered for {} collectors",
+                ManagementFactory.getGarbageCollectorMXBeans().size());
+    }
+
+    private class GcNotificationListener implements NotificationListener {
+        @Override
+        public void handleNotification(Notification notification, Object handback) {
+            if (!notification.getType().equals(
+                    GarbageCollectionNotificationInfo.GARBAGE_COLLECTION_NOTIFICATION)) {
+                return;
+            }
+
+            try {
+                GarbageCollectionNotificationInfo info =
+                        GarbageCollectionNotificationInfo.from((CompositeData) notification.getUserData());
+                GcInfo gcInfo = info.getGcInfo();
+                String action = info.getGcAction();
+                String cause = info.getGcCause();
+
+                // 构建内存池变化
+                Map<String, MemoryPoolDelta> poolDeltas = new LinkedHashMap<>();
+                Map<String, MemoryUsage> before = gcInfo.getMemoryUsageBeforeGc();
+                Map<String, MemoryUsage> after = gcInfo.getMemoryUsageAfterGc();
+
+                for (String poolName : before.keySet()) {
+                    MemoryUsage beforeUsage = before.get(poolName);
+                    MemoryUsage afterUsage = after.get(poolName);
+                    if (beforeUsage != null && afterUsage != null) {
+                        long max = beforeUsage.getMax() > 0 ? beforeUsage.getMax() : beforeUsage.getCommitted();
+                        poolDeltas.put(poolName, new MemoryPoolDelta(
+                                beforeUsage.getUsed(),
+                                afterUsage.getUsed(),
+                                beforeUsage.getCommitted(),
+                                max,
+                                beforeUsage.getUsed() - afterUsage.getUsed(),
+                                max > 0 ? (double) beforeUsage.getUsed() / max * 100 : 0,
+                                max > 0 ? (double) afterUsage.getUsed() / max * 100 : 0
+                        ));
+                    }
+                }
+
+                GcEvent event = new GcEvent(
+                        gcInfo.getId(),
+                        info.getGcName(),
+                        action,
+                        cause,
+                        gcInfo.getStartTime(),
+                        gcInfo.getEndTime(),
+                        gcInfo.getDuration(),
+                        gcInfo.getEndTime(),
+                        poolDeltas,
+                        System.currentTimeMillis()
+                );
+
+                gcEvents.addFirst(event);
+                while (gcEvents.size() > MAX_GC_EVENTS) {
+                    gcEvents.pollLast();
+                }
+
+                // 分类记录暂停时间
+                long duration = gcInfo.getDuration();
+                if (isYoungGcAction(action)) {
+                    youngGcPauseTimes.addFirst(duration);
+                    while (youngGcPauseTimes.size() > MAX_PAUSE_SAMPLES) {
+                        youngGcPauseTimes.pollLast();
+                    }
+                } else if (isFullGcAction(action)) {
+                    fullGcPauseTimes.addFirst(duration);
+                    while (fullGcPauseTimes.size() > MAX_PAUSE_SAMPLES) {
+                        fullGcPauseTimes.pollLast();
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Failed to process GC notification: {}", e.getMessage());
+            }
+        }
+    }
+
+    private boolean isYoungGcAction(String action) {
+        if (action == null) return false;
+        return action.contains("minor") || action.contains("young")
+                || action.contains("scavenge") || action.contains("copy");
+    }
+
+    private boolean isFullGcAction(String action) {
+        if (action == null) return false;
+        String lower = action.toLowerCase();
+        return lower.contains("major") || lower.contains("full")
+                || lower.contains("mark") && !lower.contains("concurrent")
+                || lower.contains("mixed");
+    }
 
     @Override
     public JvmOverview getOverview() {
@@ -211,6 +326,78 @@ public class JvmMonitorServiceImpl implements JvmMonitorService {
         }
 
         return new ThreadDump(allThreads.length, virtual, platform, threads);
+    }
+
+    @Override
+    public GcHistory getGcHistory() {
+        List<GcEvent> events = new ArrayList<>(gcEvents);
+
+        // 按 GC 类型分类统计
+        List<GcEvent> youngEvents = new ArrayList<>();
+        List<GcEvent> fullEvents = new ArrayList<>();
+        for (GcEvent e : events) {
+            if (isYoungGcAction(e.gcAction())) {
+                youngEvents.add(e);
+            } else if (isFullGcAction(e.gcAction())) {
+                fullEvents.add(e);
+            }
+        }
+
+        return new GcHistory(
+                events,
+                buildGcStatistics(youngEvents),
+                buildGcStatistics(fullEvents),
+                youngEvents.size(),
+                fullEvents.size()
+        );
+    }
+
+    private GcStatistics buildGcStatistics(List<GcEvent> events) {
+        long count = events.size();
+        if (count == 0) {
+            return new GcStatistics(0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
+
+        long totalTimeMs = 0;
+        long maxPause = 0;
+        long minPause = Long.MAX_VALUE;
+        long totalFreed = 0;
+
+        List<Long> pauses = new ArrayList<>();
+        for (GcEvent e : events) {
+            totalTimeMs += e.durationMs();
+            maxPause = Math.max(maxPause, e.durationMs());
+            minPause = Math.min(minPause, e.durationMs());
+            pauses.add(e.durationMs());
+
+            if (e.pools() != null) {
+                for (MemoryPoolDelta delta : e.pools().values()) {
+                    if (delta.freedBytes() > 0) {
+                        totalFreed += delta.freedBytes();
+                    }
+                }
+            }
+        }
+
+        if (minPause == Long.MAX_VALUE) minPause = 0;
+
+        // 计算暂停时间分布
+        pauses.sort(Long::compareTo);
+        double avgTimeMs = (double) totalTimeMs / count;
+        long p50 = percentile(pauses, 50);
+        long p95 = percentile(pauses, 95);
+        long p99 = percentile(pauses, 99);
+
+        return new GcStatistics(count, totalTimeMs, avgTimeMs, maxPause, minPause, p50, p95, p99, totalFreed);
+    }
+
+    private long percentile(List<Long> sorted, int p) {
+        int n = sorted.size();
+        if (n == 0) return 0;
+        int idx = (int) Math.ceil(n * p / 100.0) - 1;
+        if (idx < 0) idx = 0;
+        if (idx >= n) idx = n - 1;
+        return sorted.get(idx);
     }
 
     // ==================== GC 异常检测 ====================

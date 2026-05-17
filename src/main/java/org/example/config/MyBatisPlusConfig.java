@@ -77,13 +77,23 @@ public class MyBatisPlusConfig {
     }
 
     /**
+     * 慢 SQL 拦截器 Bean
+     * 同时作为 MyBatis Plugin 注册，并供监控服务注入查询统计
+     */
+    @Bean
+    public SlowSqlInterceptor slowSqlInterceptor() {
+        return new SlowSqlInterceptor();
+    }
+
+    /**
      * 配置SqlSessionFactory
      */
     @Bean
-    public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+    public SqlSessionFactory sqlSessionFactory(DataSource dataSource,
+                                                SlowSqlInterceptor slowSqlInterceptor) throws Exception {
         MybatisSqlSessionFactoryBean sessionFactory = new MybatisSqlSessionFactoryBean();
         sessionFactory.setDataSource(dataSource);
-        // 设置mapper.xml文件位置（如果有的话）
+        sessionFactory.setPlugins(slowSqlInterceptor);
         sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver()
                 .getResources("classpath*:/mapper/**/*.xml"));
         return sessionFactory.getObject();

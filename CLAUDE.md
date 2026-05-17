@@ -1200,6 +1200,91 @@ GC 详情 - 各收集器详细指标 + 最近 GC 内存变化 + 异常告警
 
 > **注意**: JVM 启动不足 5 分钟时，频率类告警自动抑制（启动阶段 GC 自然频繁）。G1 Concurrent GC 等并发标记不计入 Full GC 告警。
 
+#### `GET /api/monitor/jvm/gc/history`
+GC 事件历史 — 实时捕获每次 GC 事件（通过 JMX NotificationListener），记录 GC 原因、暂停时间、内存池变化。同时提供 Young GC 和 Full GC 的分类统计（含暂停时间分布：p50/p95/p99）。
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "events": [
+      {
+        "id": 12,
+        "collectorName": "G1 Young Generation",
+        "gcAction": "end of minor GC",
+        "gcCause": "G1 Evacuation Pause",
+        "startTime": 949891,
+        "endTime": 949898,
+        "durationMs": 7,
+        "elapsedSinceJvmStartMs": 949898,
+        "pools": {
+          "G1 Eden Space": {
+            "usedBefore": 54525952,
+            "usedAfter": 0,
+            "committed": 56623104,
+            "max": 56623104,
+            "freedBytes": 54525952,
+            "usageBeforePercent": 96.3,
+            "usageAfterPercent": 0.0
+          },
+          "G1 Old Gen": {
+            "usedBefore": 33840000,
+            "usedAfter": 36299728,
+            "committed": 48234496,
+            "max": 4294967296,
+            "freedBytes": -2459728,
+            "usageBeforePercent": 0.79,
+            "usageAfterPercent": 0.85
+          }
+        },
+        "recordedAt": 1779012828908
+      }
+    ],
+    "youngGcStats": {
+      "count": 6,
+      "totalTimeMs": 19,
+      "avgTimeMs": 3.17,
+      "maxPauseMs": 7,
+      "minPauseMs": 2,
+      "p50PauseMs": 2,
+      "p95PauseMs": 7,
+      "p99PauseMs": 7,
+      "totalFreedBytes": 283712280
+    },
+    "fullGcStats": {
+      "count": 0,
+      "totalTimeMs": 0,
+      "avgTimeMs": 0.0,
+      "maxPauseMs": 0,
+      "minPauseMs": 0,
+      "p50PauseMs": 0,
+      "p95PauseMs": 0,
+      "p99PauseMs": 0,
+      "totalFreedBytes": 0
+    },
+    "totalYoungGc": 6,
+    "totalFullGc": 0
+  },
+  "timestamp": 1700000000000
+}
+```
+
+**字段说明:**
+| 字段 | 说明 |
+|------|------|
+| `events` | 最近 200 条 GC 事件，按时间倒序 |
+| `events[].gcAction` | GC 动作类型：`end of minor GC`(Young) / `end of major GC`(Full) / `end of concurrent GC pause`(并发) |
+| `events[].gcCause` | GC 触发原因：`G1 Evacuation Pause` / `Allocation Failure` / `Metadata GC Threshold` / `System.gc()` 等 |
+| `events[].durationMs` | GC 暂停时间 (ms) |
+| `events[].elapsedSinceJvmStartMs` | 该 GC 事件距 JVM 启动的偏移时间 (ms) |
+| `events[].pools` | GC 前后各内存池使用量变化 |
+| `youngGcStats` / `fullGcStats` | Young/Full GC 分类统计 |
+| `*.p50PauseMs` / `*.p95PauseMs` / `*.p99PauseMs` | 暂停时间百分位分布 (ms) |
+| `*.totalFreedBytes` | 该类型 GC 累计释放字节数 |
+
+> **注意**: GC 事件通过 JMX NotificationListener 实时捕获，自应用启动后有效。`gcAction` 用于区分 Young/Full/Concurrent GC：minor/young/scavenge → Young，major/full/mixed → Full，其余 → Concurrent。暂停时间分布基于最近 1000 个样本。
+
 ---
 
 ### 12b. 数据库监控端点（需要认证）
@@ -1384,6 +1469,64 @@ GC 详情 - 各收集器详细指标 + 最近 GC 内存变化 + 异常告警
     "service": "数据库监控服务",
     "timestamp": 1700000000000
   },
+  "timestamp": 1700000000000
+}
+```
+
+#### `GET /api/monitor/db/slow-sql`
+获取慢 SQL 统计数据 — SQL 模板聚合统计（按总耗时降序）+ 最近慢 SQL 明细
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "stats": [
+      {
+        "sql": "SELECT * FROM payment_order WHERE status = ? AND create_time < ?",
+        "count": 1523,
+        "totalTimeMs": 4560,
+        "avgTimeMs": 2.99,
+        "maxTimeMs": 320,
+        "minTimeMs": 1,
+        "slowCount": 2,
+        "lastSlowTimeMs": 320
+      }
+    ],
+    "recentSlowSqls": [
+      {
+        "sql": "SELECT * FROM payment_order WHERE status = ? AND create_time < ?",
+        "elapsedMs": 320,
+        "timestamp": 1700000000000
+      }
+    ],
+    "thresholdMs": 1000,
+    "totalSlowCount": 2
+  },
+  "timestamp": 1700000000000
+}
+```
+
+**字段说明:**
+| 字段 | 说明 |
+|------|------|
+| `stats[].sql` | 参数化 SQL 模板（? 占位符） |
+| `stats[].count` | 该 SQL 总执行次数 |
+| `stats[].totalTimeMs` | 该 SQL 累计执行时间 (ms) |
+| `stats[].slowCount` | 超过阈值的执行次数 |
+| `stats[].lastSlowTimeMs` | 最近一次慢 SQL 耗时 (ms) |
+| `recentSlowSqls` | 最近 200 条慢 SQL 明细 |
+| `thresholdMs` | 慢 SQL 阈值（默认 1000ms） |
+| `totalSlowCount` | 所有 SQL 的慢查询总次数 |
+
+#### `DELETE /api/monitor/db/slow-sql`
+重置慢 SQL 统计（清空聚合数据和明细）
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "message": "慢 SQL 统计已重置",
   "timestamp": 1700000000000
 }
 ```
@@ -2319,9 +2462,9 @@ The project is configured to connect to a local PostgreSQL database:
 
 11. **Security** - 支付回调使用 RSA2/SHA256withRSA 验签，微信支付使用 APIv3 签名认证。密钥通过环境变量注入，无硬编码。公开端点：`/api/auth/*`、`/api/payment/notify/**`、`/api/monitor/db/health`、`/api/monitor/server/health`、`/.well-known/**`。
 
-12. **JVM Monitor** - JVM 监控端点（`/api/monitor/jvm/*`），基于 `java.lang.management` MXBeans 提供堆内存、虚拟线程/平台线程统计、GC 详情、线程转储等实时数据，无需外部依赖。GC 监控含 10 条异常检测规则。所有监控端点需要认证。
+12. **JVM Monitor** - JVM 监控端点（`/api/monitor/jvm/*`），基于 `java.lang.management` MXBeans 提供堆内存、虚拟线程/平台线程统计、GC 详情（含 Full GC 事件历史 + 暂停时间 p50/p95/p99 分布）、线程转储等实时数据，无需外部依赖。GC 监控含 10 条异常检测规则 + JMX NotificationListener 实时事件捕获。所有监控端点需要认证。
 
-13. **Database Monitor** - 数据库监控端点（`/api/monitor/db/*`），基于 HikariCP `HikariPoolMXBean` + JMX 提供连接池实时统计（活跃/空闲/等待连接数），PostgreSQL `pg_stat_user_tables` 表统计分析（行数/大小/扫描/增删改），连接延迟检测。health 端点公开，其余需要认证。
+13. **Database Monitor** - 数据库监控端点（`/api/monitor/db/*`），基于 HikariCP `HikariPoolMXBean` + JMX 提供连接池实时统计（活跃/空闲/等待连接数），PostgreSQL `pg_stat_user_tables` 表统计分析（行数/大小/扫描/增删改），连接延迟检测，**慢 SQL 统计**（MyBatis 拦截器自动采集，按 SQL 模板聚合，含最近慢 SQL 明细）。health 端点公开，其余需要认证。
 
 14. **Server Monitor** - 服务器监控端点（`/api/monitor/server/*`），跨平台（Linux/macOS）采集操作系统级指标。Linux 通过 `/proc` 文件系统获取 CPU、内存、网络统计，macOS 通过 `sysctl`/`netstat`/`ps` 等命令获取。health 端点公开，其余需要认证。
 

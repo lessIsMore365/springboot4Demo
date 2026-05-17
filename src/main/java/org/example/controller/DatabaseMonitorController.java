@@ -3,6 +3,7 @@ package org.example.controller;
 import lombok.RequiredArgsConstructor;
 import org.example.service.DatabaseMonitorService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -67,6 +68,32 @@ public class DatabaseMonitorController {
         return ResponseEntity.ok(Map.of(
                 "success", true,
                 "data", data,
+                "timestamp", System.currentTimeMillis()
+        ));
+    }
+
+    /**
+     * 慢 SQL 统计 — SQL 模板聚合统计 + 最近慢 SQL 明细
+     */
+    @GetMapping("/slow-sql")
+    public ResponseEntity<Map<String, Object>> slowSql() {
+        DatabaseMonitorService.SlowSqlSummary data = dbMonitorService.getSlowSqlStats();
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", data,
+                "timestamp", System.currentTimeMillis()
+        ));
+    }
+
+    /**
+     * 重置慢 SQL 统计
+     */
+    @DeleteMapping("/slow-sql")
+    public ResponseEntity<Map<String, Object>> resetSlowSql() {
+        dbMonitorService.resetSlowSqlStats();
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "慢 SQL 统计已重置",
                 "timestamp", System.currentTimeMillis()
         ));
     }

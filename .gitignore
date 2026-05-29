@@ -10,6 +10,7 @@ target/
 *.ipr
 
 ### Misc ###
+logs/
 Dockerfile
 cp.txt
 k8s/

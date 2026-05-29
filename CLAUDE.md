@@ -2077,6 +2077,191 @@ CPU 详情 — 使用率 + 负载 + 每核负载
 
 ---
 
+### 12e. 操作日志端点（需要认证）
+
+基于 `@Log` 注解 + AOP 切面，自动记录操作人、IP、请求参数、响应结果、耗时等信息。
+
+#### `GET /api/monitor/operlog?page=1&size=10&operName=admin&title=创建&businessType=INSERT&status=0`
+分页查询操作日志，支持按操作人、标题、业务类型、状态筛选
+
+**查询参数:**
+| 参数 | 说明 |
+|------|------|
+| `page` | 页码，默认 1 |
+| `size` | 每页条数，默认 10 |
+| `operName` | 可选，操作人筛选 |
+| `title` | 可选，标题模糊搜索 |
+| `businessType` | 可选，业务类型: `INSERT` / `UPDATE` / `DELETE` / `GRANT` / `EXPORT` / `IMPORT` / `OTHER` |
+| `status` | 可选，状态: `0`=成功, `1`=失败 |
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 2060257934938279938,
+      "title": "创建支付订单",
+      "businessType": "INSERT",
+      "method": "PaymentController.createPayment",
+      "requestMethod": "POST",
+      "operatorType": "MANAGE",
+      "operName": "admin",
+      "operUrl": "/api/payment/create",
+      "operIp": "0:0:0:0:0:0:0:1",
+      "operParam": "[{\"subject\":\"测试商品\",\"amount\":99.0}]",
+      "jsonResult": "{\"success\":true,...}",
+      "status": 0,
+      "costTime": 42,
+      "createTime": "2026-05-29T15:12:24"
+    }
+  ],
+  "pagination": { "page": 1, "size": 10, "total": 1, "pages": 1 },
+  "timestamp": 1700000000000
+}
+```
+
+#### `GET /api/monitor/operlog/{id}`
+查询单条操作日志详情
+
+#### `DELETE /api/monitor/operlog?beforeDays=90`
+清理旧操作日志，删除指定天数之前的记录，默认 90 天
+
+**使用方式:** 在 Controller 方法上添加 `@Log` 注解即可自动记录:
+```java
+@Log(title = "创建支付订单", businessType = Log.BusinessType.INSERT)
+@PostMapping("/create")
+public Map<String, Object> createPayment(...) { ... }
+```
+
+---
+
+### 12f. 在线用户管理端点（需要认证）
+
+扫描 Redis 中 OAuth2 token 获取当前在线用户列表，支持强制下线。
+
+#### `GET /api/monitor/online`
+获取当前在线用户列表（去重：同一用户多次登录只显示一条）
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "authorizationId": "2fd2d885-4db9-4786-ab55-038c287019dc",
+      "username": "admin",
+      "loginTime": "2026-05-29T15:36:32",
+      "expireTime": "2026-05-29T16:36:32",
+      "tokenType": "Bearer",
+      "registeredClientId": "80db0175-2ad2-49d6-9f56-1f409d141791",
+      "remainingSeconds": 3600,
+      "remainingDisplay": "1小时0分钟"
+    }
+  ],
+  "total": 1,
+  "timestamp": 1700000000000
+}
+```
+
+#### `DELETE /api/monitor/online/{authorizationId}`
+强制下线指定用户（删除 Redis 中的 authorization 及关联 token 索引）
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "message": "已强制下线用户",
+  "timestamp": 1700000000000
+}
+```
+
+---
+
+### 12g. 字典管理端点（需要认证）
+
+字典类型 + 字典数据 CRUD，Redis 缓存自动管理（24h TTL）。
+
+#### 字典类型
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/system/dict/type?page=1&size=10` | 分页查询字典类型 |
+| `GET` | `/api/system/dict/type/all` | 获取所有启用的字典类型 |
+| `GET` | `/api/system/dict/type/{id}` | 查询单个字典类型 |
+| `POST` | `/api/system/dict/type` | 新增字典类型 |
+| `PUT` | `/api/system/dict/type` | 更新字典类型（自动刷新缓存） |
+| `DELETE` | `/api/system/dict/type/{id}` | 删除字典类型（级联删除字典数据） |
+
+#### 字典数据
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/system/dict/data?page=1&size=10&dictType=payment_method` | 分页查询字典数据（从 DB） |
+| `GET` | `/api/system/dict/data/type/{dictType}` | 按类型获取字典数据（优先 Redis 缓存） |
+| `GET` | `/api/system/dict/data/{id}` | 查询单条字典数据 |
+| `POST` | `/api/system/dict/data` | 新增字典数据（自动刷新该类型缓存） |
+| `PUT` | `/api/system/dict/data` | 更新字典数据（自动刷新该类型缓存） |
+| `DELETE` | `/api/system/dict/data/{id}` | 删除字典数据（自动刷新该类型缓存） |
+| `POST` | `/api/system/dict/refresh-cache` | 手动刷新所有字典缓存 |
+
+**字典数据响应示例 (`/type/payment_method`):**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 8101,
+      "dictType": "payment_method",
+      "dictLabel": "支付宝",
+      "dictValue": "ALIPAY",
+      "dictSort": 1,
+      "cssClass": "",
+      "listClass": "primary",
+      "isDefault": "0",
+      "status": "0"
+    },
+    {
+      "id": 8102,
+      "dictType": "payment_method",
+      "dictLabel": "微信支付",
+      "dictValue": "WECHAT",
+      "dictSort": 2,
+      "listClass": "success",
+      "status": "0"
+    }
+  ],
+  "timestamp": 1700000000000
+}
+```
+
+**预置字典类型:** `payment_method`(支付方式)、`order_status`(订单状态)、`recon_status`(对帐状态)、`recon_diff_type`(差异类型)、`user_status`(用户状态)、`yes_no`(通用是否)
+
+---
+
+### 12h. SpringDoc 接口文档（公开）
+
+#### Swagger UI
+访问 `http://localhost:8080/swagger-ui.html` 查看交互式 API 文档
+
+#### OpenAPI 规范
+`GET /v3/api-docs` — 返回 OpenAPI 3.0 JSON
+
+**配置:**
+```yaml
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    try-it-out-enabled: true
+```
+
+> 注意: Swagger UI 页面和 `/v3/api-docs/**` 均为公开端点，无需认证。在 Swagger UI 中使用 `Authorize` 按钮设置 Bearer Token 即可测试受保护接口。
+
+---
+
 ### 13. Java 21+ 新特性演示端点（学习用，需要认证）
 
 Spring Boot 4 / Java 21+ 五大新特性交互式演示。所有端点**需要认证**（Bearer Token），返回 JSON。
@@ -2732,9 +2917,18 @@ The project is configured to connect to a local PostgreSQL database:
 
 14. **Server Monitor** - 服务器监控端点（`/api/monitor/server/*`），跨平台（Linux/macOS）采集操作系统级指标。Linux 通过 `/proc` 文件系统获取 CPU、内存、网络统计，macOS 通过 `sysctl`/`netstat`/`ps` 等命令获取。health 端点公开，其余需要认证。
 
-15. **Database Tables** - `schema.sql` 自动创建 10 张表（启动时 `mode: always`）:
+15. **OperLog** - `@Log` 注解 + AOP 切面自动记录操作日志（操作人/IP/参数/结果/耗时），支持分页查询和定期清理。
+
+16. **Online User** - 扫描 Redis OAuth2 token 获取在线用户列表，支持强制下线。通过 `StringRedisTemplate` 读取原始 JSON 绕过 Spring Security 7 allowlist 限制。
+
+17. **Dict Management** - 字典类型/数据 CRUD，Redis 缓存（24h TTL），增删改自动刷新对应类型缓存。预置 6 个字典类型 + 19 条字典数据。
+
+18. **SpringDoc** - 交互式 API 文档（Swagger UI），支持 Bearer JWT 认证，公开端点无需认证即可访问。
+
+19. **Database Tables** - `schema.sql` 自动创建 13 张表（启动时 `mode: always`）:
     - `sys_user`, `sys_role`, `sys_permission`, `sys_user_role`, `sys_role_permission`
-    - `payment_order`, `reconciliation_record`, `reconciliation_detail`
+    - `sys_oper_log`, `sys_dict_type`, `sys_dict_data`
+    - `payment_order`, `payment_notify_log`, `reconciliation_record`, `reconciliation_detail`
     
     初始数据（`data.sql`）:
     - 默认用户: `admin` / `user`（密码均为 `password`，BCrypt 加密）

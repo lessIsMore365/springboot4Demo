@@ -175,3 +175,23 @@ CREATE INDEX IF NOT EXISTS idx_recon_detail_record_id ON reconciliation_detail(r
 CREATE INDEX IF NOT EXISTS idx_recon_detail_date ON reconciliation_detail(recon_date);
 CREATE INDEX IF NOT EXISTS idx_recon_detail_diff_type ON reconciliation_detail(diff_type);
 CREATE INDEX IF NOT EXISTS idx_recon_detail_order_no ON reconciliation_detail(order_no);
+
+-- =============================================
+-- 支付回调通知日志表 payment_notify_log
+-- =============================================
+
+CREATE TABLE IF NOT EXISTS payment_notify_log (
+    id BIGINT PRIMARY KEY,
+    payment_method VARCHAR(20) NOT NULL,
+    order_no VARCHAR(64),
+    notify_body TEXT,
+    signature_valid BOOLEAN DEFAULT FALSE,
+    process_status VARCHAR(20) DEFAULT 'RECEIVED',
+    error_msg VARCHAR(500),
+    ip_address VARCHAR(50),
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_notify_log_order_no ON payment_notify_log(order_no);
+CREATE INDEX IF NOT EXISTS idx_notify_log_method_status ON payment_notify_log(payment_method, process_status);
+CREATE INDEX IF NOT EXISTS idx_notify_log_create_time ON payment_notify_log(create_time);

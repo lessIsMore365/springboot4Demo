@@ -3,6 +3,7 @@ package org.example.controller;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.entity.PaymentNotifyLog;
 import org.example.entity.PaymentOrder;
 import org.example.service.PaymentService;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -127,6 +128,54 @@ public class PaymentController {
                         "total", orderPage.getTotal(),
                         "pages", orderPage.getPages()
                 ),
+                "timestamp", System.currentTimeMillis()
+        );
+    }
+
+    /**
+     * 分页查询回调通知日志
+     */
+    @GetMapping("/notify-logs")
+    public Map<String, Object> getNotifyLogs(@RequestParam(defaultValue = "1") int page,
+                                              @RequestParam(defaultValue = "10") int size,
+                                              @RequestParam(required = false) String paymentMethod,
+                                              @RequestParam(required = false) String orderNo) {
+        Page<PaymentNotifyLog> logPage = paymentService.getNotifyLogsByPage(page, size, paymentMethod, orderNo);
+        return Map.of(
+                "success", true,
+                "data", logPage.getRecords(),
+                "pagination", Map.of(
+                        "page", logPage.getCurrent(),
+                        "size", logPage.getSize(),
+                        "total", logPage.getTotal(),
+                        "pages", logPage.getPages()
+                ),
+                "timestamp", System.currentTimeMillis()
+        );
+    }
+
+    /**
+     * 查询单条回调日志详情
+     */
+    @GetMapping("/notify-log/{id}")
+    public Map<String, Object> getNotifyLog(@PathVariable Long id) {
+        PaymentNotifyLog logEntry = paymentService.getNotifyLogById(id);
+        if (logEntry == null) {
+            return Map.of("success", false, "message", "日志不存在", "timestamp", System.currentTimeMillis());
+        }
+        return Map.of("success", true, "data", logEntry, "timestamp", System.currentTimeMillis());
+    }
+
+    /**
+     * 清理旧回调日志
+     */
+    @DeleteMapping("/notify-logs")
+    public Map<String, Object> deleteOldNotifyLogs(@RequestParam(defaultValue = "90") int beforeDays) {
+        int deleted = paymentService.deleteOldNotifyLogs(beforeDays);
+        return Map.of(
+                "success", true,
+                "message", "已清理 " + beforeDays + " 天前的回调日志，共 " + deleted + " 条",
+                "deletedCount", deleted,
                 "timestamp", System.currentTimeMillis()
         );
     }

@@ -626,6 +626,73 @@ Wechatpay-Timestamp: 1700000000
 }
 ```
 
+#### `GET /api/payment/notify-logs?page=1&size=10&paymentMethod=ALIPAY&orderNo=xxx`
+分页查询支付回调通知日志（需要认证），支持按支付方式和订单号筛选，按创建时间倒序排列
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 2059816487218905090,
+      "paymentMethod": "ALIPAY",
+      "orderNo": "AL20260528001",
+      "notifyBody": "{\"out_trade_no\":\"AL20260528001\",\"trade_no\":\"...\",...}",
+      "signatureValid": false,
+      "processStatus": "SIGN_INVALID",
+      "errorMsg": "RSA2 验签失败",
+      "ipAddress": "192.168.1.100",
+      "createTime": "2026-05-28T10:30:00"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "size": 10,
+    "total": 15,
+    "pages": 2
+  },
+  "timestamp": 1700000000000
+}
+```
+
+**查询参数:**
+| 参数 | 说明 |
+|------|------|
+| `page` | 页码，默认 1 |
+| `size` | 每页条数，默认 10 |
+| `paymentMethod` | 可选，筛选支付方式：`ALIPAY` / `WECHAT` |
+| `orderNo` | 可选，筛选订单号 |
+
+#### `GET /api/payment/notify-log/{id}`
+查询单条回调日志详情（需要认证）
+
+#### `DELETE /api/payment/notify-logs?beforeDays=90`
+清理旧回调日志（需要认证），删除指定天数之前的记录，默认 90 天
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "message": "已清理 90 天前的回调日志，共 5 条",
+  "deletedCount": 5,
+  "timestamp": 1700000000000
+}
+```
+
+**回调日志记录说明:**
+每次支付宝/微信支付回调通知到达时，无论验签通过与否、订单存在与否，系统都会自动记录一条通知日志，包含原始回调数据、验签结果、处理状态和错误信息。有效避免了仅依赖日志文件时排查困难的问题。
+
+**processStatus 枚举:**
+| 状态 | 含义 |
+|------|------|
+| `PROCESSED` | 验签通过，订单已更新为支付成功 |
+| `SIGN_INVALID` | 验签失败（如 RSA2 签名不匹配） |
+| `ORDER_NOT_FOUND` | 回调中的订单号在本地不存在 |
+| `DUPLICATE` | 订单已处理，重复通知 |
+| `RECEIVED` | 已接收但未触发订单状态变更（如非 TRADE_SUCCESS 状态） |
+| `FAILED` | 处理过程中发生异常 |
+
 ---
 
 ### 10. 对帐端点
@@ -947,6 +1014,68 @@ JVM 综合概览，一次调用获取全部关键指标
   "timestamp": 1700000000000
 }
 ```
+
+#### `GET /api/monitor/jvm/memory/history`
+堆内存历史数据 — 时间序列采样点（每 5 秒自动采集，保留最近 360 个样本 / 30 分钟），用于绘制内存变化曲线图
+
+**查询参数:**
+| 参数 | 说明 |
+|------|------|
+| `seconds` | 回溯时间范围（秒），默认 300（5 分钟），最小 10，最大 1800（30 分钟） |
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "samples": [
+      {
+        "timestamp": 1700000000000,
+        "heapUsed": 40860672,
+        "heapMax": 4294967296,
+        "heapCommitted": 94371840,
+        "heapUsagePercent": 0.95,
+        "nonHeapUsed": 67064392
+      }
+    ],
+    "sampleCount": 60,
+    "totalSamples": 120,
+    "intervalSeconds": 5,
+    "querySeconds": 300
+  },
+  "timestamp": 1700000000000
+}
+```
+
+**字段说明:**
+| 字段 | 说明 |
+|------|------|
+| `samples[].timestamp` | 采样时间戳 (epoch millis) |
+| `samples[].heapUsed` | 堆内存已使用 (bytes) |
+| `samples[].heapMax` | 堆内存最大值 (bytes) |
+| `samples[].heapCommitted` | 堆内存已提交 (bytes) |
+| `samples[].heapUsagePercent` | 堆内存使用率 (%) |
+| `samples[].nonHeapUsed` | 非堆内存已使用 (bytes) |
+| `sampleCount` | 本次返回的样本数 |
+| `totalSamples` | 内存中保存的总样本数 |
+| `intervalSeconds` | 采样间隔（秒） |
+
+---
+
+#### `GET /api/monitor/jvm/memory/chart`
+堆内存实时曲线图 — 返回 ECharts 可视化 HTML 页面，自动每 5 秒刷新
+
+**使用方式:**
+```
+GET /api/monitor/jvm/memory/chart?token=<access_token>
+```
+`token` 参数传入 Bearer token，页面会自动存储到 localStorage 并用于后续 API 轮询。
+
+**页面功能:**
+- 左侧：堆内存使用趋势折线图（已使用/已提交/最大值三条线）
+- 右侧：实时指标卡片（堆已用、堆已提交、堆最大、使用率、非堆、样本数）
+- 下方：堆使用率进度条 + 各内存池详情（G1 Eden/Survivor/Old Gen、Metaspace 等）
+- 鼠标悬停图表显示 tooltip（自动格式化字节单位）
 
 ---
 
@@ -1813,6 +1942,141 @@ CPU 详情 — 使用率 + 负载 + 每核负载
 
 ---
 
+### 12d. 日志管理端点（需要认证，health 端点公开）
+
+在线查看、搜索、下载应用日志，无需登录服务器。基础路径: `/api/logs`
+
+#### `GET /api/logs/health`（公开）
+日志管理服务健康检查
+
+#### `GET /api/logs/tail?lines=100&level=ERROR&file=application.log`
+查看最近 N 行日志（tail），支持级别过滤
+
+**查询参数:**
+| 参数 | 说明 |
+|------|------|
+| `lines` | 行数，默认 100，最大 2000 |
+| `level` | 可选级别过滤: `TRACE` / `DEBUG` / `INFO` / `WARN` / `ERROR` |
+| `file` | 日志文件名，默认 `application.log`。可选: `application.log` / `error.log` |
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "lines": ["2026-05-28 10:11:22.352 [main] INFO  org.example.DemoApplication - Started..."],
+    "count": 20,
+    "file": "application.log"
+  },
+  "timestamp": 1700000000000
+}
+```
+
+#### `GET /api/logs/search?keyword=ERROR&level=ERROR&from=2026-05-28T00:00:00&to=2026-05-28T23:59:59&page=1&size=20&file=application.log`
+搜索日志，支持关键字、级别、时间范围组合过滤，分页返回
+
+**查询参数:**
+| 参数 | 说明 |
+|------|------|
+| `keyword` | 可选，关键字（大小写不敏感） |
+| `level` | 可选，级别过滤 |
+| `from` | 可选，开始时间 ISO 格式 `2026-05-28T00:00:00` |
+| `to` | 可选，结束时间 |
+| `page` | 页码，默认 1 |
+| `size` | 每页条数，默认 20，最大 100 |
+| `file` | 日志文件，默认 `application.log` |
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "records": ["2026-05-28 10:05:00.085 [scheduling-2] ERROR o.e.s.i.PaymentServiceImpl - 关闭超时订单失败..."],
+  "total": 153,
+  "page": 1,
+  "size": 20,
+  "scannedLines": 5420,
+  "truncated": false,
+  "timestamp": 1700000000000
+}
+```
+
+**字段说明:**
+| 字段 | 说明 |
+|------|------|
+| `scannedLines` | 本次搜索实际扫描的行数 |
+| `truncated` | 是否因超过 50000 行扫描上限而被截断 |
+
+#### `GET /api/logs/files`
+列出所有日志文件及大小
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "name": "application.log",
+      "size": 1048576,
+      "sizeDisplay": "1.0 MB",
+      "lastModified": 1700000000000,
+      "lastModifiedDisplay": "2026-05-28T14:58:43Z"
+    },
+    {
+      "name": "error.log",
+      "size": 25600,
+      "sizeDisplay": "25.0 KB",
+      "lastModified": 1700000000000,
+      "lastModifiedDisplay": "2026-05-28T14:30:00Z"
+    }
+  ],
+  "total": 2,
+  "timestamp": 1700000000000
+}
+```
+
+#### `GET /api/logs/download?file=application.log`
+下载日志文件，返回文件流（浏览器会触发下载）
+
+#### `GET /api/logs/loggers`
+获取所有日志记录器及当前级别
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "ROOT": "INFO",
+    "org.example": "DEBUG",
+    "org.springframework.security": "DEBUG"
+  },
+  "timestamp": 1700000000000
+}
+```
+
+#### `PUT /api/logs/loggers/{loggerName}`
+动态修改日志级别（运行时生效，应用重启后恢复 logback 配置的默认级别）
+
+**请求体:**
+```json
+{
+  "level": "DEBUG"
+}
+```
+`loggerName` 为 `ROOT` 时修改根日志级别。
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "message": "日志级别已修改 — org.example.service → DEBUG",
+  "timestamp": 1700000000000
+}
+```
+
+**支持的级别:** `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `OFF`
+
+---
+
 ### 13. Java 21+ 新特性演示端点（学习用，需要认证）
 
 Spring Boot 4 / Java 21+ 五大新特性交互式演示。所有端点**需要认证**（Bearer Token），返回 JSON。
@@ -2462,7 +2726,7 @@ The project is configured to connect to a local PostgreSQL database:
 
 11. **Security** - 支付回调使用 RSA2/SHA256withRSA 验签，微信支付使用 APIv3 签名认证。密钥通过环境变量注入，无硬编码。公开端点：`/api/auth/*`、`/api/payment/notify/**`、`/api/monitor/db/health`、`/api/monitor/server/health`、`/.well-known/**`。
 
-12. **JVM Monitor** - JVM 监控端点（`/api/monitor/jvm/*`），基于 `java.lang.management` MXBeans 提供堆内存、虚拟线程/平台线程统计、GC 详情（含 Full GC 事件历史 + 暂停时间 p50/p95/p99 分布）、线程转储等实时数据，无需外部依赖。GC 监控含 10 条异常检测规则 + JMX NotificationListener 实时事件捕获。所有监控端点需要认证。
+12. **JVM Monitor** - JVM 监控端点（`/api/monitor/jvm/*`），基于 `java.lang.management` MXBeans 提供堆内存、虚拟线程/平台线程统计、GC 详情（含 Full GC 事件历史 + 暂停时间 p50/p95/p99 分布）、线程转储等实时数据，无需外部依赖。GC 监控含 10 条异常检测规则 + JMX NotificationListener 实时事件捕获。**新增**：`/memory/history` 时间序列堆内存采样（5s 间隔，30 分钟历史）、`/memory/chart` ECharts 实时曲线可视化页面。所有监控端点需要认证（chart 页面公开，通过 `?token=` 传参认证）。
 
 13. **Database Monitor** - 数据库监控端点（`/api/monitor/db/*`），基于 HikariCP `HikariPoolMXBean` + JMX 提供连接池实时统计（活跃/空闲/等待连接数），PostgreSQL `pg_stat_user_tables` 表统计分析（行数/大小/扫描/增删改），连接延迟检测，**慢 SQL 统计**（MyBatis 拦截器自动采集，按 SQL 模板聚合，含最近慢 SQL 明细）。health 端点公开，其余需要认证。
 

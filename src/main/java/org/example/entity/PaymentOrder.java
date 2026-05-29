@@ -55,6 +55,5 @@ public class PaymentOrder {
     @TableLogic
     private Integer deleted;
 
-    @Version
     private Integer version;
 }

@@ -3,11 +3,14 @@ package org.example.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.config.AlipayConfig;
 import org.example.config.WechatPayConfig;
+import org.example.entity.PaymentNotifyLog;
 import org.example.entity.PaymentOrder;
+import org.example.mapper.PaymentNotifyLogMapper;
 import org.example.mapper.PaymentOrderMapper;
 import org.example.service.PaymentService;
 import org.springframework.scheduling.annotation.Async;
@@ -29,9 +32,11 @@ import java.util.concurrent.CompletableFuture;
 public class PaymentServiceImpl implements PaymentService {
 
     private final PaymentOrderMapper paymentOrderMapper;
+    private final PaymentNotifyLogMapper notifyLogMapper;
     private final AlipayConfig alipayConfig;
     private final WechatPayConfig wechatPayConfig;
     private final ObjectMapper objectMapper;
+    private final HttpServletRequest request;
 
     private static final DateTimeFormatter ORDER_NO_DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
@@ -188,35 +193,45 @@ public class PaymentServiceImpl implements PaymentService {
         String tradeNo = params.get("trade_no");
         String tradeStatus = params.get("trade_status");
         String buyerId = params.get("buyer_id");
+        String notifyBody;
+        try {
+            notifyBody = objectMapper.writeValueAsString(params);
+        } catch (Exception e) {
+            notifyBody = params.toString();
+        }
 
         PaymentOrder order = queryOrder(orderNo);
         if (order == null) {
             log.error("支付宝通知订单不存在: {}", orderNo);
+            saveNotifyLog("ALIPAY", orderNo, notifyBody, null, "ORDER_NOT_FOUND", "订单不存在", getClientIp());
             return "failure";
         }
 
         // RSA2验签
         String signContent = alipayConfig.buildSignContent(params);
         String sign = params.get("sign");
-        if (!alipayConfig.verify(signContent, sign)) {
+        boolean sigValid = alipayConfig.verify(signContent, sign);
+        if (!sigValid) {
             log.error("支付宝通知验签失败: {}", orderNo);
+            saveNotifyLog("ALIPAY", orderNo, notifyBody, false, "SIGN_INVALID", "RSA2 验签失败", getClientIp());
             return "failure";
         }
 
         if ("TRADE_SUCCESS".equals(tradeStatus) || "TRADE_FINISHED".equals(tradeStatus)) {
-            if (!"SUCCESS".equals(order.getStatus())) {
+            if ("SUCCESS".equals(order.getStatus())) {
+                saveNotifyLog("ALIPAY", orderNo, notifyBody, true, "DUPLICATE", "订单已处理，重复通知", getClientIp());
+            } else {
                 order.setStatus("SUCCESS");
                 order.setTradeNo(tradeNo);
                 order.setBuyerId(buyerId);
                 order.setPaidTime(LocalDateTime.now());
-                try {
-                    order.setNotifyData(objectMapper.writeValueAsString(params));
-                } catch (Exception e) {
-                    order.setNotifyData(params.toString());
-                }
+                order.setNotifyData(notifyBody);
                 paymentOrderMapper.updateById(order);
                 log.info("支付宝支付成功 - 订单号: {}, 交易号: {}", orderNo, tradeNo);
+                saveNotifyLog("ALIPAY", orderNo, notifyBody, true, "PROCESSED", null, getClientIp());
             }
+        } else {
+            saveNotifyLog("ALIPAY", orderNo, notifyBody, true, "RECEIVED", "交易状态: " + tradeStatus, getClientIp());
         }
 
         return "success";
@@ -253,22 +268,29 @@ public class PaymentServiceImpl implements PaymentService {
                 PaymentOrder order = queryOrder(orderNo);
                 if (order == null) {
                     log.error("微信通知订单不存在: {}", orderNo);
+                    saveNotifyLog("WECHAT", orderNo, body, null, "ORDER_NOT_FOUND", "订单不存在", getClientIp());
                     return Map.of("code", "FAIL", "message", "订单不存在");
                 }
 
-                if (!"SUCCESS".equals(order.getStatus())) {
+                if ("SUCCESS".equals(order.getStatus())) {
+                    saveNotifyLog("WECHAT", orderNo, body, null, "DUPLICATE", "订单已处理，重复通知", getClientIp());
+                } else {
                     order.setStatus("SUCCESS");
                     order.setTradeNo(((Map<String, Object>) transaction.get("transaction_id")).toString());
                     order.setPaidTime(LocalDateTime.now());
                     order.setNotifyData(body);
                     paymentOrderMapper.updateById(order);
                     log.info("微信支付成功 - 订单号: {}", orderNo);
+                    saveNotifyLog("WECHAT", orderNo, body, null, "PROCESSED", null, getClientIp());
                 }
+            } else {
+                saveNotifyLog("WECHAT", null, body, null, "RECEIVED", "事件类型: " + eventType, getClientIp());
             }
 
             return Map.of("code", "SUCCESS", "message", "OK");
         } catch (Exception e) {
             log.error("微信支付通知处理异常", e);
+            saveNotifyLog("WECHAT", null, body, null, "FAILED", e.getClass().getSimpleName() + ": " + e.getMessage(), getClientIp());
             return Map.of("code", "FAIL", "message", e.getMessage());
         }
     }
@@ -466,5 +488,63 @@ public class PaymentServiceImpl implements PaymentService {
     private String escapeHtml(String s) {
         return s.replace("&", "&amp;").replace("\"", "&quot;")
                 .replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    // ==================== 回调日志 ====================
+
+    private void saveNotifyLog(String paymentMethod, String orderNo, String notifyBody,
+                                Boolean signatureValid, String processStatus, String errorMsg, String ipAddress) {
+        try {
+            PaymentNotifyLog notifyLog = new PaymentNotifyLog();
+            notifyLog.setPaymentMethod(paymentMethod);
+            notifyLog.setOrderNo(orderNo);
+            notifyLog.setNotifyBody(notifyBody);
+            notifyLog.setSignatureValid(signatureValid);
+            notifyLog.setProcessStatus(processStatus);
+            notifyLog.setErrorMsg(errorMsg);
+            notifyLog.setIpAddress(ipAddress);
+            notifyLog.setCreateTime(LocalDateTime.now());
+            notifyLogMapper.insert(notifyLog);
+        } catch (Exception e) {
+            log.error("保存回调通知日志失败", e);
+        }
+    }
+
+    private String getClientIp() {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isBlank() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("X-Real-IP");
+        }
+        if (ip == null || ip.isBlank() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        return ip;
+    }
+
+    @Override
+    public Page<PaymentNotifyLog> getNotifyLogsByPage(int page, int size, String paymentMethod, String orderNo) {
+        Page<PaymentNotifyLog> pageParam = new Page<>(page, size);
+        LambdaQueryWrapper<PaymentNotifyLog> wrapper = new LambdaQueryWrapper<>();
+        if (paymentMethod != null && !paymentMethod.isBlank()) {
+            wrapper.eq(PaymentNotifyLog::getPaymentMethod, paymentMethod.toUpperCase());
+        }
+        if (orderNo != null && !orderNo.isBlank()) {
+            wrapper.eq(PaymentNotifyLog::getOrderNo, orderNo);
+        }
+        wrapper.orderByDesc(PaymentNotifyLog::getCreateTime);
+        return notifyLogMapper.selectPage(pageParam, wrapper);
+    }
+
+    @Override
+    public PaymentNotifyLog getNotifyLogById(Long id) {
+        return notifyLogMapper.selectById(id);
+    }
+
+    @Override
+    public int deleteOldNotifyLogs(int beforeDays) {
+        LocalDateTime deadline = LocalDateTime.now().minusDays(beforeDays);
+        LambdaQueryWrapper<PaymentNotifyLog> wrapper = new LambdaQueryWrapper<>();
+        wrapper.lt(PaymentNotifyLog::getCreateTime, deadline);
+        return notifyLogMapper.delete(wrapper);
     }
 }

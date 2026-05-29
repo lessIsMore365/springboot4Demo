@@ -160,8 +160,12 @@ public class AuthController {
     public ResponseEntity<Map<String, Object>> healthCheck() {
         return ResponseEntity.ok()
                 .body(Map.of(
-                        "status", "UP",
-                        "service", "authentication",
+                        "success", true,
+                        "data", Map.of(
+                                "status", "UP",
+                                "service", "认证服务",
+                                "timestamp", System.currentTimeMillis()
+                        ),
                         "timestamp", System.currentTimeMillis()
                 ));
     }

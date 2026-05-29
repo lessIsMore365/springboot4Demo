@@ -1,6 +1,7 @@
 package org.example.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import org.example.entity.PaymentNotifyLog;
 import org.example.entity.PaymentOrder;
 
 import java.math.BigDecimal;
@@ -89,4 +90,19 @@ public interface PaymentService {
      * @return 关闭的订单数量
      */
     int closeExpiredOrders();
+
+    /**
+     * 分页查询回调通知日志
+     */
+    Page<PaymentNotifyLog> getNotifyLogsByPage(int page, int size, String paymentMethod, String orderNo);
+
+    /**
+     * 查询单条回调日志
+     */
+    PaymentNotifyLog getNotifyLogById(Long id);
+
+    /**
+     * 删除指定天数之前的回调日志
+     */
+    int deleteOldNotifyLogs(int beforeDays);
 }

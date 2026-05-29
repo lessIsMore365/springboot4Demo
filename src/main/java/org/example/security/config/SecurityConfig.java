@@ -60,6 +60,8 @@ public class SecurityConfig {
                                 "/api/payment/notify/**",
                                 "/api/monitor/db/health",
                                 "/api/monitor/server/health",
+                                "/api/logs/health",
+                                "/api/monitor/jvm/memory/chart",
                                 "/.well-known/**"
                         ).permitAll()
                         .anyRequest().authenticated()

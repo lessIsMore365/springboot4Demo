@@ -114,3 +114,17 @@ logging:
     org.springframework.security.oauth2: DEBUG
     org.springframework.security.oauth2.server.authorization: DEBUG
     org.example: DEBUG
+
+# SpringDoc OpenAPI 配置
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    try-it-out-enabled: true
+    filter: false
+    tags-sorter: alpha
+    operations-sorter: alpha
+

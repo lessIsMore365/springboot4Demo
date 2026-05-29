@@ -2,7 +2,6 @@ package org.example.security.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -61,7 +60,6 @@ public class RedisTokenStoreConfig {
         Jackson2JsonRedisSerializer<OAuth2Authorization> serializer =
                 new Jackson2JsonRedisSerializer<>(OAuth2Authorization.class);
 
-        // 配置ObjectMapper以支持OAuth2Authorization序列化
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
         mapper.registerModules(SecurityJackson2Modules.getModules(getClass().getClassLoader()));

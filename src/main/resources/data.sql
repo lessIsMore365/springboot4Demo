@@ -109,3 +109,44 @@ INSERT INTO reconciliation_detail (id, recon_record_id, recon_date, order_no, tr
 (7002, 6001, '2026-05-01', 'AL20260503002', '2026050322001000000000000002', 299.00, 299.00, 'SUCCESS', 'SUCCESS', 'MATCH', '一致', NOW(), 0),
 (7003, 6002, '2026-05-01', 'WX20260503001', '4200000000202605030000000001', 199.00, 199.00, 'SUCCESS', 'SUCCESS', 'MATCH', '一致', NOW(), 0)
 ON CONFLICT (id) DO NOTHING;
+
+-- =============================================
+-- 字典管理初始数据
+-- =============================================
+
+-- 字典类型
+INSERT INTO sys_dict_type (id, dict_name, dict_type, status, remark, create_time, update_time) VALUES
+(8001, '支付方式', 'payment_method', '0', '支付方式字典', NOW(), NOW()),
+(8002, '订单状态', 'order_status', '0', '支付订单状态', NOW(), NOW()),
+(8003, '对帐状态', 'recon_status', '0', '对帐记录状态', NOW(), NOW()),
+(8004, '对帐差异类型', 'recon_diff_type', '0', '对帐明细差异类型', NOW(), NOW()),
+(8005, '用户状态', 'user_status', '0', '用户启用/禁用', NOW(), NOW()),
+(8006, '通用是否', 'yes_no', '0', '通用是/否字典', NOW(), NOW())
+ON CONFLICT (id) DO NOTHING;
+
+-- 字典数据
+INSERT INTO sys_dict_data (id, dict_type, dict_label, dict_value, dict_sort, css_class, list_class, is_default, status, create_time, update_time) VALUES
+-- 支付方式
+(8101, 'payment_method', '支付宝', 'ALIPAY', 1, '', 'primary', '0', '0', NOW(), NOW()),
+(8102, 'payment_method', '微信支付', 'WECHAT', 2, '', 'success', '0', '0', NOW(), NOW()),
+-- 订单状态
+(8201, 'order_status', '待支付', 'PENDING', 1, '', 'warning', '0', '0', NOW(), NOW()),
+(8202, 'order_status', '已支付', 'SUCCESS', 2, '', 'success', '0', '0', NOW(), NOW()),
+(8203, 'order_status', '已关闭', 'CLOSED', 3, '', 'info', '0', '0', NOW(), NOW()),
+(8204, 'order_status', '已退款', 'REFUND', 4, '', 'danger', '0', '0', NOW(), NOW()),
+-- 对帐状态
+(8301, 'recon_status', '对帐一致', 'SUCCESS', 1, '', 'success', '0', '0', NOW(), NOW()),
+(8302, 'recon_status', '存在差异', 'DIFF', 2, '', 'warning', '0', '0', NOW(), NOW()),
+(8303, 'recon_status', '对帐异常', 'ERROR', 3, '', 'danger', '0', '0', NOW(), NOW()),
+-- 对帐差异类型
+(8401, 'recon_diff_type', '一致', 'MATCH', 1, '', 'success', '0', '0', NOW(), NOW()),
+(8402, 'recon_diff_type', '金额/状态不符', 'MISMATCH', 2, '', 'warning', '0', '0', NOW(), NOW()),
+(8403, 'recon_diff_type', '仅本地存在', 'LOCAL_ONLY', 3, '', 'info', '0', '0', NOW(), NOW()),
+(8404, 'recon_diff_type', '仅平台存在', 'REMOTE_ONLY', 4, '', 'danger', '0', '0', NOW(), NOW()),
+-- 用户状态
+(8501, 'user_status', '启用', '0', 1, '', 'success', '0', '0', NOW(), NOW()),
+(8502, 'user_status', '禁用', '1', 2, '', 'danger', '0', '0', NOW(), NOW()),
+-- 通用是否
+(8601, 'yes_no', '是', '1', 1, '', 'success', '0', '0', NOW(), NOW()),
+(8602, 'yes_no', '否', '0', 2, '', 'danger', '0', '0', NOW(), NOW())
+ON CONFLICT (id) DO NOTHING;

@@ -3,6 +3,7 @@ package org.example.controller;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.annotation.Log;
 import org.example.entity.PaymentNotifyLog;
 import org.example.entity.PaymentOrder;
 import org.example.service.PaymentService;
@@ -24,6 +25,7 @@ public class PaymentController {
     /**
      * 创建支付订单
      */
+    @Log(title = "创建支付订单", businessType = Log.BusinessType.INSERT)
     @PostMapping("/create")
     public Map<String, Object> createPayment(@RequestBody Map<String, Object> request) {
         String subject = request.get("subject").toString();
@@ -101,6 +103,7 @@ public class PaymentController {
     /**
      * 申请退款
      */
+    @Log(title = "申请退款", businessType = Log.BusinessType.UPDATE)
     @PostMapping("/refund")
     public Map<String, Object> refund(@RequestBody Map<String, Object> request) {
         String orderNo = request.get("orderNo").toString();

@@ -62,6 +62,10 @@ public class SecurityConfig {
                                 "/api/monitor/server/health",
                                 "/api/logs/health",
                                 "/api/monitor/jvm/memory/chart",
+                                "/swagger-ui.html",
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**",
+                                "/webjars/**",
                                 "/.well-known/**"
                         ).permitAll()
                         .anyRequest().authenticated()

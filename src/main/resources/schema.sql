@@ -195,3 +195,65 @@ CREATE TABLE IF NOT EXISTS payment_notify_log (
 CREATE INDEX IF NOT EXISTS idx_notify_log_order_no ON payment_notify_log(order_no);
 CREATE INDEX IF NOT EXISTS idx_notify_log_method_status ON payment_notify_log(payment_method, process_status);
 CREATE INDEX IF NOT EXISTS idx_notify_log_create_time ON payment_notify_log(create_time);
+
+-- =============================================
+-- 操作日志表 sys_oper_log
+-- =============================================
+
+CREATE TABLE IF NOT EXISTS sys_oper_log (
+    id BIGINT PRIMARY KEY,
+    title VARCHAR(200),
+    business_type VARCHAR(20),
+    method VARCHAR(200),
+    request_method VARCHAR(10),
+    operator_type VARCHAR(10),
+    oper_name VARCHAR(100),
+    oper_url VARCHAR(500),
+    oper_ip VARCHAR(50),
+    oper_location VARCHAR(100),
+    oper_param TEXT,
+    json_result TEXT,
+    status INTEGER DEFAULT 0,
+    error_msg VARCHAR(500),
+    cost_time BIGINT DEFAULT 0,
+    create_time TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_oper_log_oper_name ON sys_oper_log(oper_name);
+CREATE INDEX IF NOT EXISTS idx_oper_log_business_type ON sys_oper_log(business_type);
+CREATE INDEX IF NOT EXISTS idx_oper_log_status ON sys_oper_log(status);
+CREATE INDEX IF NOT EXISTS idx_oper_log_create_time ON sys_oper_log(create_time);
+
+-- =============================================
+-- 字典管理表
+-- =============================================
+
+CREATE TABLE IF NOT EXISTS sys_dict_type (
+    id BIGINT PRIMARY KEY,
+    dict_name VARCHAR(100) NOT NULL,
+    dict_type VARCHAR(100) NOT NULL,
+    status VARCHAR(2) DEFAULT '0',
+    remark VARCHAR(500),
+    create_time TIMESTAMP,
+    update_time TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dict_type ON sys_dict_type(dict_type);
+
+CREATE TABLE IF NOT EXISTS sys_dict_data (
+    id BIGINT PRIMARY KEY,
+    dict_type VARCHAR(100) NOT NULL,
+    dict_label VARCHAR(100) NOT NULL,
+    dict_value VARCHAR(100) NOT NULL,
+    dict_sort INTEGER DEFAULT 0,
+    css_class VARCHAR(50),
+    list_class VARCHAR(50),
+    is_default VARCHAR(2) DEFAULT '0',
+    status VARCHAR(2) DEFAULT '0',
+    remark VARCHAR(500),
+    create_time TIMESTAMP,
+    update_time TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_dict_data_type ON sys_dict_data(dict_type);
+CREATE INDEX IF NOT EXISTS idx_dict_data_sort ON sys_dict_data(dict_sort);

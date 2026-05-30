@@ -257,3 +257,105 @@ CREATE TABLE IF NOT EXISTS sys_dict_data (
 
 CREATE INDEX IF NOT EXISTS idx_dict_data_type ON sys_dict_data(dict_type);
 CREATE INDEX IF NOT EXISTS idx_dict_data_sort ON sys_dict_data(dict_sort);
+
+-- =============================================
+-- AI 模块 (AI Module) 表
+-- =============================================
+
+-- AI API 用量统计表
+CREATE TABLE IF NOT EXISTS ai_api_usage (
+    id BIGINT PRIMARY KEY,
+    model VARCHAR(50) NOT NULL,
+    endpoint VARCHAR(100),
+    prompt_tokens INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    total_tokens INTEGER DEFAULT 0,
+    cost DECIMAL(10, 6) DEFAULT 0.000000,
+    latency_ms INTEGER DEFAULT 0,
+    user_id BIGINT,
+    username VARCHAR(100),
+    success BOOLEAN DEFAULT TRUE,
+    error_msg VARCHAR(500),
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_api_usage_model ON ai_api_usage(model);
+CREATE INDEX IF NOT EXISTS idx_ai_api_usage_create_time ON ai_api_usage(create_time);
+CREATE INDEX IF NOT EXISTS idx_ai_api_usage_username ON ai_api_usage(username);
+
+-- AI 对话会话表
+CREATE TABLE IF NOT EXISTS ai_chat_session (
+    id BIGINT PRIMARY KEY,
+    session_id VARCHAR(64) NOT NULL,
+    user_id BIGINT,
+    username VARCHAR(100),
+    title VARCHAR(200),
+    model VARCHAR(50) NOT NULL,
+    message_count INTEGER DEFAULT 0,
+    total_tokens INTEGER DEFAULT 0,
+    total_cost DECIMAL(10, 6) DEFAULT 0.000000,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_chat_session_id ON ai_chat_session(session_id);
+CREATE INDEX IF NOT EXISTS idx_ai_chat_session_user_id ON ai_chat_session(user_id);
+CREATE INDEX IF NOT EXISTS idx_ai_chat_session_create_time ON ai_chat_session(create_time);
+
+-- AI 对话历史表
+CREATE TABLE IF NOT EXISTS ai_chat_history (
+    id BIGINT PRIMARY KEY,
+    session_id VARCHAR(64) NOT NULL,
+    role VARCHAR(20) NOT NULL,
+    content TEXT,
+    tool_calls TEXT,
+    tool_call_id VARCHAR(64),
+    token_count INTEGER DEFAULT 0,
+    seq INTEGER DEFAULT 0,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_chat_history_session_id ON ai_chat_history(session_id);
+CREATE INDEX IF NOT EXISTS idx_ai_chat_history_seq ON ai_chat_history(session_id, seq);
+
+-- AI 知识库表
+CREATE TABLE IF NOT EXISTS ai_knowledge_base (
+    id BIGINT PRIMARY KEY,
+    name VARCHAR(200) NOT NULL,
+    description VARCHAR(500),
+    doc_count INTEGER DEFAULT 0,
+    chunk_count INTEGER DEFAULT 0,
+    enabled BOOLEAN DEFAULT TRUE,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP
+);
+
+-- AI 知识库文档表
+CREATE TABLE IF NOT EXISTS ai_knowledge_doc (
+    id BIGINT PRIMARY KEY,
+    kb_id BIGINT NOT NULL,
+    file_name VARCHAR(300) NOT NULL,
+    file_type VARCHAR(20),
+    file_size BIGINT DEFAULT 0,
+    content_text TEXT,
+    chunk_count INTEGER DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'PENDING',
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_knowledge_doc_kb_id ON ai_knowledge_doc(kb_id);
+
+-- AI 知识库分块表
+CREATE TABLE IF NOT EXISTS ai_knowledge_chunk (
+    id BIGINT PRIMARY KEY,
+    doc_id BIGINT NOT NULL,
+    kb_id BIGINT NOT NULL,
+    chunk_index INTEGER DEFAULT 0,
+    content TEXT NOT NULL,
+    embedding JSON,
+    token_count INTEGER DEFAULT 0,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_knowledge_chunk_doc_id ON ai_knowledge_chunk(doc_id);
+CREATE INDEX IF NOT EXISTS idx_ai_knowledge_chunk_kb_id ON ai_knowledge_chunk(kb_id);

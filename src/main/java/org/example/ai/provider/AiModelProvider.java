@@ -16,6 +16,10 @@ public interface AiModelProvider {
 
     double getCostPerMillionTokens();
 
+    default int getMaxTokens() { return 4096; }
+
+    default double getTemperature() { return 0.7; }
+
     default Map<String, Object> getInfo() {
         return Map.of(
                 "name", getName(),

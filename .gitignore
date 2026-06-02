@@ -9,6 +9,9 @@ target/
 *.iml
 *.ipr
 
+### Private config ###
+src/main/resources/application.yml
+
 ### Misc ###
 logs/
 Dockerfile

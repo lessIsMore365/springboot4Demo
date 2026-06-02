@@ -150,3 +150,13 @@ INSERT INTO sys_dict_data (id, dict_type, dict_label, dict_value, dict_sort, css
 (8601, 'yes_no', '是', '1', 1, '', 'success', '0', '0', NOW(), NOW()),
 (8602, 'yes_no', '否', '0', 2, '', 'danger', '0', '0', NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
+
+-- =============================================
+-- AI 模型提供商配置初始数据
+-- =============================================
+INSERT INTO ai_provider_config (id, name, display_name, api_key, base_url, model, max_tokens, temperature, cost_per_million_tokens, enabled, sort_order, create_time, update_time) VALUES
+(9001, 'deepseek', 'DeepSeek', '', 'https://api.deepseek.com', 'deepseek-chat', 4096, 0.7, 1.0, TRUE, 1, NOW(), NOW()),
+(9002, 'qwen',    '通义千问',       '', 'https://dashscope.aliyuncs.com/compatible-mode', 'qwen-turbo',     4096, 0.7, 2.0,  TRUE, 2, NOW(), NOW()),
+(9003, 'kimi',    'Kimi (月之暗面)', '', 'https://api.moonshot.cn',                         'moonshot-v1-8k', 4096, 0.7, 12.0, TRUE, 3, NOW(), NOW()),
+(9004, 'glm',     '智谱 GLM',       '', 'https://open.bigmodel.cn/api/paas/v4',             'glm-4-flash',    4096, 0.7, 5.0,  TRUE, 4, NOW(), NOW())
+ON CONFLICT (id) DO NOTHING;

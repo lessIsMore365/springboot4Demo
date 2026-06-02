@@ -13,7 +13,6 @@ import org.example.ai.service.AiChatService;
 import org.example.ai.service.AiUsageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -21,6 +20,8 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -37,24 +38,18 @@ public class AiChatServiceImpl implements AiChatService {
     private final AiFunctionRegistry functionRegistry;
     private final AiUsageService usageService;
     private final AiChatHistoryService historyService;
-    private final int maxTokens;
-    private final double temperature;
 
     public AiChatServiceImpl(
             AiModelRouter router,
             ObjectMapper objectMapper,
             AiFunctionRegistry functionRegistry,
             AiUsageService usageService,
-            AiChatHistoryService historyService,
-            @Value("${ai.deepseek.max-tokens}") int maxTokens,
-            @Value("${ai.deepseek.temperature}") double temperature) {
+            AiChatHistoryService historyService) {
         this.router = router;
         this.objectMapper = objectMapper;
         this.functionRegistry = functionRegistry;
         this.usageService = usageService;
         this.historyService = historyService;
-        this.maxTokens = maxTokens;
-        this.temperature = temperature;
     }
 
     @Override
@@ -111,8 +106,10 @@ public class AiChatServiceImpl implements AiChatService {
     private void doChatLoop(List<ChatMessage> messages, boolean enableFunctions, SseEmitter emitter,
                             AiModelProvider provider) throws IOException {
         int maxLoops = 5;
+        int maxTokens = provider.getMaxTokens();
+        double temperature = provider.getTemperature();
         for (int loop = 0; loop < maxLoops; loop++) {
-            ChatRequest request = buildRequest(messages, enableFunctions, provider.getModel());
+            ChatRequest request = buildRequest(messages, enableFunctions, provider.getModel(), maxTokens, temperature);
             String accumulated = callLLMStream(request, emitter, provider);
             boolean hasToolCalls = processToolCalls(accumulated, messages, emitter);
             if (!hasToolCalls) {
@@ -121,7 +118,8 @@ public class AiChatServiceImpl implements AiChatService {
         }
     }
 
-    private ChatRequest buildRequest(List<ChatMessage> messages, boolean enableFunctions, String model) {
+    private ChatRequest buildRequest(List<ChatMessage> messages, boolean enableFunctions, String model,
+                                      int maxTokens, double temperature) {
         List<ChatRequest.Tool> tools = enableFunctions ? functionRegistry.getToolDefinitions() : null;
         String toolChoice = enableFunctions ? "auto" : null;
         return new ChatRequest(model, messages, true, maxTokens, temperature, tools, toolChoice);
@@ -129,7 +127,9 @@ public class AiChatServiceImpl implements AiChatService {
 
     private String callLLMStream(ChatRequest request, SseEmitter emitter, AiModelProvider provider) throws IOException {
         StringBuilder contentBuf = new StringBuilder();
-        StringBuilder toolCallBuf = new StringBuilder();
+        Map<Integer, String> tcIds = new HashMap<>();
+        Map<Integer, String> tcNames = new HashMap<>();
+        Map<Integer, StringBuilder> tcArgs = new LinkedHashMap<>();
 
         provider.getRestClient().post()
                 .uri("/v1/chat/completions")
@@ -157,15 +157,13 @@ public class AiChatServiceImpl implements AiChatService {
                                                 }
                                                 if (choice.delta().toolCalls() != null) {
                                                     for (ChatResponse.ToolCallDelta tc : choice.delta().toolCalls()) {
+                                                        int ti = tc.index() != null ? tc.index() : 0;
+                                                        if (tc.id() != null) tcIds.put(ti, tc.id());
                                                         if (tc.function() != null) {
-                                                            if (tc.function().name() != null) {
-                                                                toolCallBuf.append("{\"id\":\"").append(tc.id()).append("\",\"name\":\"").append(tc.function().name()).append("\",\"arguments\":");
-                                                            }
+                                                            if (tc.function().name() != null) tcNames.put(ti, tc.function().name());
                                                             if (tc.function().arguments() != null) {
-                                                                toolCallBuf.append(tc.function().arguments());
-                                                            }
-                                                            if (tc.id() != null && tc.function() != null && tc.function().name() != null) {
-                                                                toolCallBuf.append("}");
+                                                                tcArgs.computeIfAbsent(ti, k -> new StringBuilder())
+                                                                        .append(tc.function().arguments());
                                                             }
                                                         }
                                                     }
@@ -181,6 +179,24 @@ public class AiChatServiceImpl implements AiChatService {
                     }
                     return null;
                 });
+
+        String toolCallBuf = "";
+        if (!tcArgs.isEmpty()) {
+            List<Map<String, String>> tcList = new ArrayList<>();
+            for (Map.Entry<Integer, StringBuilder> entry : tcArgs.entrySet()) {
+                int idx = entry.getKey();
+                Map<String, String> tc = new LinkedHashMap<>();
+                tc.put("id", tcIds.getOrDefault(idx, "call_" + idx));
+                tc.put("name", tcNames.getOrDefault(idx, "unknown"));
+                tc.put("arguments", entry.getValue().toString());
+                tcList.add(tc);
+            }
+            try {
+                toolCallBuf = objectMapper.writeValueAsString(tcList);
+            } catch (Exception e) {
+                log.warn("Failed to serialize tool calls: {}", e.getMessage());
+            }
+        }
         return contentBuf + (toolCallBuf.isEmpty() ? "" : "\n<<TOOL_CALLS>>" + toolCallBuf);
     }
 
@@ -192,30 +208,12 @@ public class AiChatServiceImpl implements AiChatService {
         String content = idx > 0 ? accumulated.substring(0, idx) : "";
         String raw = accumulated.substring(idx + 14);
 
-        List<Map<String, Object>> toolCalls = new ArrayList<>();
-        StringBuilder json = new StringBuilder();
-        int depth = 0;
-        boolean inString = false;
-        for (int i = 0; i < raw.length(); i++) {
-            char c = raw.charAt(i);
-            if (c == '"' && (i == 0 || raw.charAt(i - 1) != '\\')) inString = !inString;
-            if (!inString) {
-                if (c == '{') depth++;
-                else if (c == '}') {
-                    depth--;
-                    if (depth == 0) {
-                        json.append(c);
-                        try {
-                            toolCalls.add(objectMapper.readValue(json.toString(), Map.class));
-                        } catch (Exception e) {
-                            log.debug("Parse tool call error: {}", e.getMessage());
-                        }
-                        json.setLength(0);
-                        continue;
-                    }
-                }
-            }
-            json.append(c);
+        List<Map<String, Object>> toolCalls;
+        try {
+            toolCalls = objectMapper.readValue(raw, List.class);
+        } catch (Exception e) {
+            log.warn("Failed to parse tool calls JSON: {}", e.getMessage());
+            return false;
         }
 
         if (toolCalls.isEmpty()) return false;
@@ -223,7 +221,27 @@ public class AiChatServiceImpl implements AiChatService {
         List<ChatMessage.ToolCall> assistantToolCalls = new ArrayList<>();
         for (int i = 0; i < toolCalls.size(); i++) {
             Map<String, Object> tc = toolCalls.get(i);
-            String tcId = (String) tc.getOrDefault("id", "call_" + i);
+            String tcId = (String) tc.get("id");
+            String name = (String) tc.get("name");
+            String argsStr = (String) tc.get("arguments");
+            if (name == null) continue;
+
+            ChatMessage.ToolCall.Function fn = new ChatMessage.ToolCall.Function(name, argsStr);
+            ChatMessage.ToolCall call = new ChatMessage.ToolCall(tcId != null ? tcId : "call_" + i, "function", fn);
+            assistantToolCalls.add(call);
+        }
+
+        // Add assistant message with tool_calls first (correct API message order)
+        if (!content.isEmpty()) {
+            messages.add(new ChatMessage("assistant", content, assistantToolCalls, null));
+        } else {
+            messages.add(ChatMessage.assistant(assistantToolCalls));
+        }
+
+        // Then add tool result messages
+        for (int i = 0; i < toolCalls.size(); i++) {
+            Map<String, Object> tc = toolCalls.get(i);
+            String tcId = (String) tc.get("id");
             String name = (String) tc.get("name");
             String argsStr = (String) tc.get("arguments");
             if (name == null) continue;
@@ -237,10 +255,6 @@ public class AiChatServiceImpl implements AiChatService {
                 }
             }
 
-            ChatMessage.ToolCall.Function fn = new ChatMessage.ToolCall.Function(name, argsStr);
-            ChatMessage.ToolCall call = new ChatMessage.ToolCall(tcId, "function", fn);
-            assistantToolCalls.add(call);
-
             AiFunction aiFn = functionRegistry.get(name);
             String toolResult;
             try {
@@ -250,14 +264,10 @@ public class AiChatServiceImpl implements AiChatService {
                 toolResult = "{\"error\": \"" + e.getMessage() + "\"}";
             }
 
-            messages.add(ChatMessage.tool(tcId, toolResult));
+            messages.add(ChatMessage.tool(tcId != null ? tcId : "call_" + i, toolResult));
             emitter.send(SseEmitter.event().name("tool_call").data(Map.of("function", name, "result", toolResult)));
         }
 
-        messages.add(ChatMessage.assistant(assistantToolCalls));
-        if (!content.isEmpty()) {
-            messages.add(ChatMessage.assistant(content));
-        }
         return true;
     }
 }

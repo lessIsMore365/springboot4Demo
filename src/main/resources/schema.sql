@@ -359,3 +359,22 @@ CREATE TABLE IF NOT EXISTS ai_knowledge_chunk (
 
 CREATE INDEX IF NOT EXISTS idx_ai_knowledge_chunk_doc_id ON ai_knowledge_chunk(doc_id);
 CREATE INDEX IF NOT EXISTS idx_ai_knowledge_chunk_kb_id ON ai_knowledge_chunk(kb_id);
+
+-- AI 模型提供商配置表
+CREATE TABLE IF NOT EXISTS ai_provider_config (
+    id BIGINT PRIMARY KEY,
+    name VARCHAR(30) NOT NULL,
+    display_name VARCHAR(50),
+    api_key VARCHAR(200),
+    base_url VARCHAR(300),
+    model VARCHAR(100),
+    max_tokens INTEGER DEFAULT 4096,
+    temperature DECIMAL(3,2) DEFAULT 0.7,
+    cost_per_million_tokens DECIMAL(10,2) DEFAULT 1.0,
+    enabled BOOLEAN DEFAULT TRUE,
+    sort_order INTEGER DEFAULT 0,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_provider_config_name ON ai_provider_config(name);

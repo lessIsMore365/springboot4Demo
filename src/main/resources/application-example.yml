@@ -1,3 +1,7 @@
+# 公共模板文件，复制为 application.yml 使用：
+#   cp src/main/resources/application-example.yml src/main/resources/application.yml
+# application.yml 已在 .gitignore 中，不会被提交
+
 # Spring Boot 4 虚拟线程配置
 spring:
   threads:
@@ -7,8 +11,8 @@ spring:
   # PostgreSQL 数据库配置
   datasource:
     url: jdbc:postgresql://127.0.0.1:5432/postgres
-    username: xz
-    password: 252511
+    username: ${DB_USERNAME:xz}
+    password: ${DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
     hikari:
       # 虚拟线程优化配置
@@ -52,7 +56,7 @@ spring:
   # SQL 初始化配置
   sql:
     init:
-      mode: always  # 始终执行 schema.sql 和 data.sql
+      mode: never  # 首次运行改为 always 以自动建表，之后改回 never
       schema-locations: classpath:schema.sql
       data-locations: classpath:data.sql
 
@@ -60,7 +64,7 @@ spring:
   redis:
     host: 127.0.0.1
     port: 6379
-    password: 252511
+    password: ${REDIS_PASSWORD:}
     database: 0
     timeout: 5000
     lettuce:
@@ -115,7 +119,9 @@ logging:
     org.springframework.security.oauth2.server.authorization: DEBUG
     org.example: DEBUG
 
-# AI 配置（多模型支持：DeepSeek / 通义千问 / Kimi / 智谱GLM）
+# AI 配置（通过数据库 ai_provider_config 表管理，支持 Web 端实时修改生效）
+# 启动时若 DB 为空，自动初始化以下默认值；环境变量 API Key 自动覆盖 DB 空值
+# 管理端点: GET/PUT /api/ai/config/{name}（需要认证，修改需要 ADMIN）
 ai:
   deepseek:
     api-key: ${DEEPSEEK_API_KEY:}

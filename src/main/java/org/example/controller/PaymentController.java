@@ -28,14 +28,27 @@ public class PaymentController {
     @Log(title = "创建支付订单", businessType = Log.BusinessType.INSERT)
     @PostMapping("/create")
     public Map<String, Object> createPayment(@RequestBody Map<String, Object> request) {
+        String validationError = validatePaymentRequest(request);
+        if (validationError != null) {
+            return Map.of("success", false, "message", validationError, "timestamp", System.currentTimeMillis());
+        }
+
         String subject = request.get("subject").toString();
         String body = request.getOrDefault("body", "").toString();
         BigDecimal amount = new BigDecimal(request.get("amount").toString());
         String paymentMethod = request.get("paymentMethod").toString();
+        String tradeType = request.getOrDefault("tradeType", "PAGE").toString();
+        String bizType = request.getOrDefault("bizType", "").toString();
+        String remark = request.getOrDefault("remark", "").toString();
 
-        log.info("创建支付 - 方式: {}, 金额: {}", paymentMethod, amount);
-        Map<String, Object> result = paymentService.createPayment(subject, body, amount, paymentMethod);
-        return Map.of("success", true, "data", result, "timestamp", System.currentTimeMillis());
+        log.info("创建支付 - 方式: {}, 交易类型: {}, 业务: {}, 金额: {}", paymentMethod, tradeType, bizType, amount);
+        try {
+            Map<String, Object> result = paymentService.createPayment(subject, body, amount, paymentMethod, tradeType, bizType, remark);
+            return Map.of("success", true, "data", result, "timestamp", System.currentTimeMillis());
+        } catch (RuntimeException e) {
+            log.error("创建支付订单失败 - {}", e.getMessage());
+            return Map.of("success", false, "message", e.getMessage(), "timestamp", System.currentTimeMillis());
+        }
     }
 
     /**
@@ -43,13 +56,22 @@ public class PaymentController {
      */
     @PostMapping("/create/async")
     public CompletableFuture<Map<String, Object>> createPaymentAsync(@RequestBody Map<String, Object> request) {
+        String validationError = validatePaymentRequest(request);
+        if (validationError != null) {
+            return CompletableFuture.completedFuture(
+                    Map.of("success", false, "message", validationError, "timestamp", System.currentTimeMillis()));
+        }
+
         String subject = request.get("subject").toString();
         String body = request.getOrDefault("body", "").toString();
         BigDecimal amount = new BigDecimal(request.get("amount").toString());
         String paymentMethod = request.get("paymentMethod").toString();
+        String tradeType = request.getOrDefault("tradeType", "PAGE").toString();
+        String bizType = request.getOrDefault("bizType", "").toString();
+        String remark = request.getOrDefault("remark", "").toString();
 
-        log.info("异步创建支付 - 方式: {}, 金额: {}", paymentMethod, amount);
-        return paymentService.createPaymentAsync(subject, body, amount, paymentMethod)
+        log.info("异步创建支付 - 方式: {}, 交易类型: {}, 业务: {}, 金额: {}", paymentMethod, tradeType, bizType, amount);
+        return paymentService.createPaymentAsync(subject, body, amount, paymentMethod, tradeType, bizType, remark)
                 .thenApply(result -> Map.of("success", true, "data", result, "timestamp", System.currentTimeMillis()));
     }
 
@@ -106,13 +128,33 @@ public class PaymentController {
     @Log(title = "申请退款", businessType = Log.BusinessType.UPDATE)
     @PostMapping("/refund")
     public Map<String, Object> refund(@RequestBody Map<String, Object> request) {
-        String orderNo = request.get("orderNo").toString();
-        BigDecimal amount = new BigDecimal(request.get("amount").toString());
+        Object orderNoObj = request.get("orderNo");
+        Object amountObj = request.get("amount");
+
+        if (orderNoObj == null || orderNoObj.toString().isBlank()) {
+            return Map.of("success", false, "message", "订单号不能为空", "timestamp", System.currentTimeMillis());
+        }
+        if (amountObj == null) {
+            return Map.of("success", false, "message", "退款金额不能为空", "timestamp", System.currentTimeMillis());
+        }
+
+        String orderNo = orderNoObj.toString();
+        BigDecimal amount;
+        try {
+            amount = new BigDecimal(amountObj.toString());
+        } catch (NumberFormatException e) {
+            return Map.of("success", false, "message", "退款金额格式无效", "timestamp", System.currentTimeMillis());
+        }
         String reason = request.getOrDefault("reason", "用户申请退款").toString();
 
         log.info("申请退款 - 订单号: {}, 金额: {}", orderNo, amount);
-        Map<String, Object> result = paymentService.refund(orderNo, amount, reason);
-        return Map.of("success", true, "data", result, "timestamp", System.currentTimeMillis());
+        try {
+            Map<String, Object> result = paymentService.refund(orderNo, amount, reason);
+            return Map.of("success", true, "data", result, "timestamp", System.currentTimeMillis());
+        } catch (RuntimeException e) {
+            log.error("退款失败 - {}", e.getMessage());
+            return Map.of("success", false, "message", e.getMessage(), "timestamp", System.currentTimeMillis());
+        }
     }
 
     /**
@@ -181,6 +223,41 @@ public class PaymentController {
                 "deletedCount", deleted,
                 "timestamp", System.currentTimeMillis()
         );
+    }
+
+    private static final java.util.Set<String> VALID_METHODS = java.util.Set.of("ALIPAY", "WECHAT");
+    private static final java.util.Set<String> VALID_TRADE_TYPES = java.util.Set.of("PAGE", "WAP", "APP", "JSAPI");
+
+    private String validatePaymentRequest(Map<String, Object> request) {
+        Object subjectObj = request.get("subject");
+        Object amountObj = request.get("amount");
+        Object methodObj = request.get("paymentMethod");
+
+        if (subjectObj == null || subjectObj.toString().isBlank()) {
+            return "商品标题(subject)不能为空";
+        }
+        if (amountObj == null) {
+            return "支付金额(amount)不能为空";
+        }
+        try {
+            BigDecimal amount = new BigDecimal(amountObj.toString());
+            if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+                return "支付金额必须大于0";
+            }
+        } catch (NumberFormatException e) {
+            return "支付金额格式无效";
+        }
+        if (methodObj == null || methodObj.toString().isBlank()) {
+            return "支付方式(paymentMethod)不能为空";
+        }
+        if (!VALID_METHODS.contains(methodObj.toString().toUpperCase())) {
+            return "不支持的支付方式: " + methodObj + "，仅支持 ALIPAY / WECHAT";
+        }
+        Object tradeTypeObj = request.get("tradeType");
+        if (tradeTypeObj != null && !VALID_TRADE_TYPES.contains(tradeTypeObj.toString().toUpperCase())) {
+            return "不支持的交易类型: " + tradeTypeObj + "，仅支持 PAGE / WAP / APP / JSAPI";
+        }
+        return null;
     }
 
     /**

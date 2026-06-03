@@ -11,7 +11,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.0-M3</version> <!-- 最新里程碑版本 -->
+        <version>4.1.0-RC1</version> <!-- Spring Boot 4.1.0 RC1 -->
         <relativePath/>
     </parent>
 

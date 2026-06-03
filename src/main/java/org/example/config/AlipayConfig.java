@@ -1,8 +1,7 @@
 package org.example.config;
 
-import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.example.payment.service.PaymentConfigService;
 import org.springframework.context.annotation.Configuration;
 
 import java.nio.charset.StandardCharsets;
@@ -17,22 +16,23 @@ import java.util.Map;
 import java.util.TreeMap;
 
 @Slf4j
-@Data
 @Configuration
-@ConfigurationProperties(prefix = "payment.alipay")
 public class AlipayConfig {
 
-    private String appId;
-    private String privateKey;
-    private String alipayPublicKey;
-    private String gatewayUrl = "https://openapi.alipay.com/gateway.do";
-    private String signType = "RSA2";
-    private String notifyUrl;
-    private String returnUrl;
+    private final PaymentConfigService configService;
 
-    /**
-     * 构建待签名字符串
-     */
+    public AlipayConfig(PaymentConfigService configService) {
+        this.configService = configService;
+    }
+
+    public String getAppId() { return configService.getConfig("ALIPAY").getAppId(); }
+    public String getPrivateKey() { return configService.getConfig("ALIPAY").getPrivateKey(); }
+    public String getAlipayPublicKey() { return configService.getConfig("ALIPAY").getAlipayPublicKey(); }
+    public String getGatewayUrl() { return configService.getConfig("ALIPAY").getGatewayUrl(); }
+    public String getSignType() { return configService.getConfig("ALIPAY").getSignType(); }
+    public String getNotifyUrl() { return configService.getConfig("ALIPAY").getNotifyUrl(); }
+    public String getReturnUrl() { return configService.getConfig("ALIPAY").getReturnUrl(); }
+
     public String buildSignContent(Map<String, String> params) {
         TreeMap<String, String> sortedParams = new TreeMap<>(params);
         StringBuilder sb = new StringBuilder();
@@ -48,10 +48,8 @@ public class AlipayConfig {
         return sb.toString();
     }
 
-    /**
-     * RSA2签名
-     */
     public String sign(String content) {
+        String privateKey = getPrivateKey();
         if (privateKey == null || privateKey.isEmpty()) {
             log.warn("支付宝私钥未配置，使用模拟签名");
             return "SIMULATED_SIGN_" + System.currentTimeMillis();
@@ -76,10 +74,8 @@ public class AlipayConfig {
         }
     }
 
-    /**
-     * RSA2验签
-     */
     public boolean verify(String content, String sign) {
+        String alipayPublicKey = getAlipayPublicKey();
         if (alipayPublicKey == null || alipayPublicKey.isEmpty()) {
             log.warn("支付宝公钥未配置，跳过验签");
             return true;

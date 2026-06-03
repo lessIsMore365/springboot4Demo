@@ -113,12 +113,15 @@ CREATE TABLE IF NOT EXISTS payment_order (
     amount DECIMAL(10, 2) NOT NULL,
     subject VARCHAR(256),
     body VARCHAR(500),
+    biz_type VARCHAR(50),
+    remark VARCHAR(500),
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
     trade_no VARCHAR(64),
     buyer_id VARCHAR(64),
     paid_time TIMESTAMP,
     refund_amount DECIMAL(10, 2) DEFAULT 0.00,
     notify_data TEXT,
+    pay_data TEXT,
     create_time TIMESTAMP,
     update_time TIMESTAMP,
     deleted INTEGER DEFAULT 0,
@@ -130,6 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_order_trade_no ON payment_order(trade_no)
 CREATE INDEX IF NOT EXISTS idx_payment_order_method_status ON payment_order(payment_method, status);
 CREATE INDEX IF NOT EXISTS idx_payment_order_create_time ON payment_order(create_time);
 CREATE INDEX IF NOT EXISTS idx_payment_order_paid_time ON payment_order(paid_time);
+CREATE INDEX IF NOT EXISTS idx_payment_order_biz_type ON payment_order(biz_type);
 
 -- 创建对帐记录表 reconciliation_record
 CREATE TABLE IF NOT EXISTS reconciliation_record (
@@ -378,3 +382,26 @@ CREATE TABLE IF NOT EXISTS ai_provider_config (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_provider_config_name ON ai_provider_config(name);
+
+-- 创建支付配置表 payment_config（Web 端实时配置生效）
+CREATE TABLE IF NOT EXISTS payment_config (
+    id BIGINT PRIMARY KEY,
+    payment_method VARCHAR(10) NOT NULL,
+    app_id VARCHAR(100),
+    gateway_url VARCHAR(300),
+    notify_url VARCHAR(300),
+    sign_type VARCHAR(10) DEFAULT 'RSA2',
+    private_key TEXT,
+    alipay_public_key TEXT,
+    return_url VARCHAR(300),
+    mch_id VARCHAR(50),
+    api_v3_key VARCHAR(100),
+    mch_serial_no VARCHAR(100),
+    private_key_path VARCHAR(300),
+    order_expire_minutes INTEGER DEFAULT 15,
+    enabled BOOLEAN DEFAULT TRUE,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_config_method ON payment_config(payment_method);

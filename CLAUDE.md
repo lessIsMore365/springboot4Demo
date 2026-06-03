@@ -59,7 +59,8 @@ mvn clean package
 ### 通用说明
 - 基础路径: `http://localhost:8080`
 - 认证方式: Spring Authorization Server (OAuth2 password grant + JWT)
-- **公开端点**（无需认证）：`/api/auth/register`、`/api/auth/captcha`、`/api/auth/captcha/verify`、`/api/auth/health`、`/api/payment/notify/**`、`/api/ai/**`（除 `/api/ai/config/**` 需要认证）、`/api/mcp/**`、`/api/monitor/db/health`、`/api/monitor/server/health`、`/api/logs/health`、`/.well-known/**`
+- **公开端点**（无需认证）：`/api/auth/register`、`/api/auth/captcha`、`/api/auth/captcha/verify`、`/api/auth/health`、`/api/payment/notify/**`、`/api/payment/stats/chart`、`/api/ai/**`（除 `/api/ai/config/**` 需要认证）、`/api/mcp/**`、`/api/monitor/db/health`、`/api/monitor/server/health`、`/api/monitor/jvm/memory/chart`、`/api/logs/health`、`/.well-known/**`
+- **支付配置管理**：`/api/payment/config/**`（需要认证）
 - **获取 Token**：`POST /oauth2/token` 使用 Basic Auth（Client ID + Client Secret）+ `grant_type=password` + 验证码
 - **访问受保护端点**：携带 `Authorization: Bearer <access_token>`
 - 虚拟线程端点带 `/async` 后缀，异步返回 `CompletableFuture`
@@ -490,7 +491,7 @@ curl -s -X POST http://localhost:8080/oauth2/token \
 ### 9. 支付端点
 
 #### `POST /api/payment/create`
-创建支付订单（支付宝/微信）
+创建支付订单（支付宝/微信），支持多终端来源
 
 **请求体:**
 ```json
@@ -498,12 +499,23 @@ curl -s -X POST http://localhost:8080/oauth2/token \
   "subject": "测试商品",
   "body": "商品描述",
   "amount": 99.00,
-  "paymentMethod": "ALIPAY"
+  "paymentMethod": "ALIPAY",
+  "tradeType": "PAGE"
 }
 ```
 `paymentMethod` 可选值: `ALIPAY` / `WECHAT`
+`tradeType` 可选值: `PAGE`（PC网页，默认）/ `WAP`（移动H5）/ `APP`（原生App）/ `JSAPI`（小程序/公众号）
 
-**支付宝响应示例:**
+**按 tradeType 返回的支付数据:**
+
+| tradeType | 支付宝返回字段 | 微信返回字段 | 使用场景 |
+|-----------|-------------|------------|---------|
+| `PAGE` | `payForm` (HTML表单) | `codeUrl` (扫码链接) | PC 网页 → 跳转支付/扫码 |
+| `WAP` | `redirectUrl` (重定向URL) | `h5Url` (H5支付链接) | 移动浏览器 → 唤起支付 |
+| `APP` | `orderString` (签名字符串) | `appid`, `partnerid`, `prepayid`, `package`, `noncestr`, `timestamp`, `sign` | App 内 → SDK 调起支付 |
+| `JSAPI` | `tradeNo` (交易号) | `appId`, `timeStamp`, `nonceStr`, `package`, `signType`, `paySign` | 小程序/公众号 → JSAPI 调起 |
+
+**支付宝 PAGE 响应示例:**
 ```json
 {
   "success": true,
@@ -511,6 +523,7 @@ curl -s -X POST http://localhost:8080/oauth2/token \
     "orderNo": "AL20260503001",
     "amount": 99.00,
     "paymentMethod": "ALIPAY",
+    "tradeType": "PAGE",
     "status": "PENDING",
     "payForm": "<form id=\"alipayForm\" action=\"https://openapi.alipay.com/gateway.do\" method=\"POST\">...</form>"
   },
@@ -518,7 +531,7 @@ curl -s -X POST http://localhost:8080/oauth2/token \
 }
 ```
 
-**微信支付响应示例:**
+**微信 APP 响应示例:**
 ```json
 {
   "success": true,
@@ -526,8 +539,15 @@ curl -s -X POST http://localhost:8080/oauth2/token \
     "orderNo": "WX20260503001",
     "amount": 199.00,
     "paymentMethod": "WECHAT",
+    "tradeType": "APP",
     "status": "PENDING",
-    "codeUrl": "weixin://wxpay/bizpayurl?pr=wxabc123..."
+    "appid": "wx0000000000000000",
+    "partnerid": "0000000000",
+    "prepayid": "wx_prepay_app_a1b2c3d4e5f6",
+    "package": "Sign=WXPay",
+    "noncestr": "a1b2c3d4e5f6...",
+    "timestamp": 1700000000,
+    "sign": "SIMULATED_HMAC_..."
   },
   "timestamp": 1700000000000
 }
@@ -630,6 +650,92 @@ Wechatpay-Timestamp: 1700000000
 #### `GET /api/payment/orders?page=1&size=10`
 分页查询支付订单
 
+#### 支付参数配置管理（需要认证，修改需要 ADMIN）
+
+Web 端管理支付宝/微信支付参数，修改后实时生效无需重启。
+
+##### `GET /api/payment/config`
+列出所有支付配置（私钥等敏感字段脱敏）
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 9100,
+      "paymentMethod": "ALIPAY",
+      "appId": "2021000000000000",
+      "gatewayUrl": "https://openapi.alipay.com/gateway.do",
+      "notifyUrl": "http://localhost:8080/api/payment/notify/alipay",
+      "signType": "RSA2",
+      "privateKey": "",
+      "alipayPublicKey": "",
+      "returnUrl": "http://localhost:8080/payment/result",
+      "enabled": true,
+      "createTime": "2026-06-02T10:00:00",
+      "updateTime": "2026-06-02T10:00:00"
+    },
+    {
+      "id": 9101,
+      "paymentMethod": "WECHAT",
+      "appId": "wx0000000000000000",
+      "gatewayUrl": "https://api.mch.weixin.qq.com",
+      "notifyUrl": "http://localhost:8080/api/payment/notify/wechat",
+      "mchId": "0000000000",
+      "apiV3Key": "",
+      "mchSerialNo": "",
+      "privateKeyPath": "",
+      "enabled": true,
+      "createTime": "2026-06-02T10:00:00",
+      "updateTime": "2026-06-02T10:00:00"
+    }
+  ],
+  "total": 2,
+  "timestamp": 1700000000000
+}
+```
+
+##### `GET /api/payment/config/{method}`
+查看单个支付配置详情（method: `ALIPAY` / `WECHAT`）
+
+##### `PUT /api/payment/config/{method}`（需要 ADMIN）
+更新配置，立即生效
+
+**请求体（仅需传要修改的字段）:**
+```json
+{
+  "privateKey": "-----BEGIN PRIVATE KEY-----\n...",
+  "alipayPublicKey": "-----BEGIN PUBLIC KEY-----\n...",
+  "notifyUrl": "https://mydomain.com/api/payment/notify/alipay"
+}
+```
+
+**可更新字段:**
+- 支付宝: `appId`, `gatewayUrl`, `notifyUrl`, `signType`, `privateKey`, `alipayPublicKey`, `returnUrl`, `orderExpireMinutes`, `enabled`
+- 微信: `appId`, `gatewayUrl`, `notifyUrl`, `mchId`, `apiV3Key`, `mchSerialNo`, `privateKeyPath`, `orderExpireMinutes`, `enabled`
+- `orderExpireMinutes`: 订单过期时间（分钟），默认 15，创建超过该时间的未支付订单将被自动关闭
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": { ... },
+  "message": "配置已更新，实时生效",
+  "timestamp": 1700000000000
+}
+```
+
+##### `POST /api/payment/config/refresh`（需要 ADMIN）
+从数据库重新加载支付配置
+
+**配置生效机制:**
+```
+API 修改配置 → 更新 DB → 刷新内存缓存 → 下次支付请求使用新配置
+```
+
+---
+
 #### `GET /api/payment/health`
 支付服务健康检查
 
@@ -709,6 +815,83 @@ Wechatpay-Timestamp: 1700000000
 | `DUPLICATE` | 订单已处理，重复通知 |
 | `RECEIVED` | 已接收但未触发订单状态变更（如非 TRADE_SUCCESS 状态） |
 | `FAILED` | 处理过程中发生异常 |
+
+---
+
+#### 支付统计端点（需要认证，chart 页面公开）
+
+支付统计分析 REST API 和 ECharts 可视化仪表盘。所有数据端点需要认证，图表页面通过 `?token=` URL 参数传递 Bearer token 认证。
+
+##### `GET /api/payment/stats/overview?startDate=2026-05-01&endDate=2026-06-02&paymentMethod=ALIPAY`
+概览统计 — 总订单数、总金额、成功/退款/待支付/已关闭订单数及金额
+
+**查询参数:**
+| 参数 | 说明 |
+|------|------|
+| `startDate` | 开始日期，默认 30 天前 |
+| `endDate` | 结束日期，默认今天 |
+| `paymentMethod` | 可选，筛选支付方式 |
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "totalorders": 5,
+    "totalamount": 1345.0,
+    "successcount": 3,
+    "successamount": 597.0,
+    "refundcount": 0,
+    "refundamount": 0,
+    "pendingcount": 0,
+    "closedcount": 2
+  },
+  "timestamp": 1700000000000
+}
+```
+
+##### `GET /api/payment/stats/trend?startDate=2026-05-01&endDate=2026-06-02&paymentMethod=ALIPAY`
+收入趋势 — 每日支付金额 + 订单数时间序列
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {"date": "2026-05-05", "ordercount": 5, "totalamount": 1345.0, "successcount": 3, "successamount": 597.0}
+  ],
+  "timestamp": 1700000000000
+}
+```
+
+##### `GET /api/payment/stats/by-method?startDate=2026-05-01&endDate=2026-06-02`
+支付方式分布 — 支付宝 vs 微信支付的金额和订单数
+
+##### `GET /api/payment/stats/by-biz-type?startDate=2026-05-01&endDate=2026-06-02&paymentMethod=ALIPAY`
+业务分类分布 — 按 `bizType` 分组统计金额和订单数
+
+##### `GET /api/payment/stats/by-status?startDate=2026-05-01&endDate=2026-06-02&paymentMethod=ALIPAY`
+订单状态分布 — PENDING/SUCCESS/CLOSED/REFUND 四类占比
+
+##### `GET /api/payment/stats/recent`
+最近 10 笔订单（简要信息）
+
+##### `GET /api/payment/stats/chart`（公开）
+ECharts 可视化仪表盘 HTML 页面，通过 `?token=<access_token>` 传参认证
+
+**使用方式:**
+```
+GET /api/payment/stats/chart?token=<access_token>
+```
+
+**页面功能:**
+- 日期范围 + 支付方式筛选器
+- 概览卡片（总订单数/总金额/成功率/退款）
+- 收入趋势图（柱状图 + 折线图，双 Y 轴）
+- 支付方式分布饼图
+- 业务分类分布饼图
+- 订单状态分布饼图（带状态颜色映射）
+- 5 秒自动刷新
 
 ---
 
@@ -3428,11 +3611,12 @@ The project is configured to connect to a local PostgreSQL database:
 - `src/main/java/org/example/entity/` - Entity classes
   - `User.java`, `Role.java`, `Permission.java`, `UserRole.java`, `RolePermission.java`
   - `PaymentOrder.java` - 支付订单实体
+  - `PaymentConfig.java` - 支付配置实体（Web 端实时生效）
   - `ReconciliationRecord.java` - 对帐记录实体
   - `ReconciliationDetail.java` - 对帐明细实体
 - `src/main/java/org/example/mapper/` - MyBatis Plus mapper interfaces
   - `UserMapper.java`, `RoleMapper.java`, `PermissionMapper.java`, `UserRoleMapper.java`, `RolePermissionMapper.java`
-  - `PaymentOrderMapper.java`, `ReconciliationRecordMapper.java`, `ReconciliationDetailMapper.java`
+  - `PaymentOrderMapper.java`, `PaymentConfigMapper.java`, `ReconciliationRecordMapper.java`, `ReconciliationDetailMapper.java`
 - `src/main/java/org/example/service/` - Service interfaces
   - `UserService.java`, `RoleService.java`, `PermissionService.java`, `RedisService.java`
   - `CaptchaService.java` - 验证码服务接口
@@ -3442,6 +3626,8 @@ The project is configured to connect to a local PostgreSQL database:
   - `RedisServiceImpl.java`, `CaptchaServiceImpl.java`
   - `PaymentServiceImpl.java` - 支付宝/微信支付实现（RSA2签名、APIv3认证、直接HTTP调用）
   - `ReconciliationServiceImpl.java` - 对帐实现（逐笔比对、差异识别、统计汇总）
+- `src/main/java/org/example/payment/service/PaymentConfigService.java` - 支付配置服务（缓存+热重载）
+- `src/main/java/org/example/payment/controller/PaymentConfigController.java` - 支付配置 REST API
 - `src/main/java/org/example/controller/` - REST controllers
   - `HelloController.java`, `DemoController.java`, `DatabaseTestController.java`
   - `RedisTestController.java`, `AuthController.java`, `CaptchaController.java`
@@ -3532,7 +3718,7 @@ The project is configured to connect to a local PostgreSQL database:
 
 8. **OAuth2 认证** - 基于 Spring Authorization Server 1.5.1。支持 password、client_credentials、refresh_token、authorization_code 四种授权模式。客户端凭据通过 BCrypt 哈希存储（web-client:secret / api-client:api-secret）。JWT 使用 RSA 2048 密钥对签名，JWK Set 暴露在 `/oauth2/jwks`。Token 通过 Redis 持久化支持分布式部署。自定义密码模式集成验证码校验，验证码参数（captcha_key + captcha_code）在 CaptchaValidationFilter 中校验。包含 3 个 Spring Security 7.x 兼容桥接类：ObjectPostProcessor、AntPathRequestMatcher、RequestVariablesExtractor。
 
-9. **Payment Module** - 支付宝页面支付 + 微信Native扫码支付。使用 RSA2 签名直接调用 REST API，无 SDK 依赖。所有支付操作使用虚拟线程。
+9. **Payment Module** - 支付宝页面支付 + 微信Native扫码支付。使用 RSA2 签名直接调用 REST API，无 SDK 依赖。支付参数（密钥、网关、通知地址等）支持 Web 端实时配置，无需重启。所有支付操作使用虚拟线程。
 
 10. **Reconciliation** - 每日凌晨自动对帐。逐笔比对订单号/金额/状态，识别 MATCH/MISMATCH/LOCAL_ONLY/REMOTE_ONLY 四类差异。对帐结果持久化到数据库，支持历史查询和统计分析。
 
@@ -3562,10 +3748,10 @@ The project is configured to connect to a local PostgreSQL database:
     - RAG 知识库（文档上传→Apache Tika 解析→切片→关键词检索→LLM 问答）
     - MCP 协议服务（JSON-RPC，暴露业务函数给外部 Agent）
 
-20. **Database Tables** - `schema.sql` 自动创建 19 张表（启动时 `mode: always`）:
+20. **Database Tables** - `schema.sql` 自动创建 20 张表（启动时 `mode: always`）:
     - `sys_user`, `sys_role`, `sys_permission`, `sys_user_role`, `sys_role_permission`
     - `sys_oper_log`, `sys_dict_type`, `sys_dict_data`
-    - `payment_order`, `payment_notify_log`, `reconciliation_record`, `reconciliation_detail`
+    - `payment_order`, `payment_notify_log`, `payment_config`, `reconciliation_record`, `reconciliation_detail`
     - `ai_api_usage`, `ai_chat_session`, `ai_chat_history`
     - `ai_knowledge_base`, `ai_knowledge_doc`, `ai_knowledge_chunk`
     

@@ -20,6 +20,7 @@ import java.util.concurrent.CompletableFuture;
 public class ReconciliationController {
 
     private final ReconciliationService reconciliationService;
+    private static final java.util.Set<String> VALID_METHODS = java.util.Set.of("ALIPAY", "WECHAT");
 
     /**
      * 手动触发对帐
@@ -31,15 +32,24 @@ public class ReconciliationController {
                 : LocalDate.now().minusDays(1);
         String paymentMethod = request.getOrDefault("paymentMethod", "ALIPAY").toString();
 
-        log.info("手动触发对帐 - 日期: {}, 方式: {}", reconDate, paymentMethod);
-        ReconciliationRecord record = reconciliationService.reconcile(reconDate, paymentMethod);
+        if (!VALID_METHODS.contains(paymentMethod.toUpperCase())) {
+            return Map.of("success", false, "message", "不支持的支付方式: " + paymentMethod + "，仅支持 ALIPAY / WECHAT",
+                    "timestamp", System.currentTimeMillis());
+        }
 
-        return Map.of(
-                "success", true,
-                "data", record,
-                "message", "SUCCESS".equals(record.getStatus()) ? "对帐一致" : "存在差异，请查看详情",
-                "timestamp", System.currentTimeMillis()
-        );
+        log.info("手动触发对帐 - 日期: {}, 方式: {}", reconDate, paymentMethod);
+        try {
+            ReconciliationRecord record = reconciliationService.reconcile(reconDate, paymentMethod);
+            return Map.of(
+                    "success", true,
+                    "data", record,
+                    "message", "SUCCESS".equals(record.getStatus()) ? "对帐一致" : "存在差异，请查看详情",
+                    "timestamp", System.currentTimeMillis()
+            );
+        } catch (RuntimeException e) {
+            log.error("对帐失败 - {}", e.getMessage());
+            return Map.of("success", false, "message", e.getMessage(), "timestamp", System.currentTimeMillis());
+        }
     }
 
     /**
@@ -51,6 +61,12 @@ public class ReconciliationController {
                 ? LocalDate.parse(request.get("date").toString())
                 : LocalDate.now().minusDays(1);
         String paymentMethod = request.getOrDefault("paymentMethod", "ALIPAY").toString();
+
+        if (!VALID_METHODS.contains(paymentMethod.toUpperCase())) {
+            return CompletableFuture.completedFuture(
+                    Map.of("success", false, "message", "不支持的支付方式: " + paymentMethod + "，仅支持 ALIPAY / WECHAT",
+                            "timestamp", System.currentTimeMillis()));
+        }
 
         log.info("异步触发对帐 - 日期: {}, 方式: {}", reconDate, paymentMethod);
         return reconciliationService.reconcileAsync(reconDate, paymentMethod)

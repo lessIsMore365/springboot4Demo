@@ -1,8 +1,7 @@
 package org.example.config;
 
-import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.example.payment.service.PaymentConfigService;
 import org.springframework.context.annotation.Configuration;
 
 import javax.crypto.Mac;
@@ -15,23 +14,23 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Base64;
 
 @Slf4j
-@Data
 @Configuration
-@ConfigurationProperties(prefix = "payment.wechat")
 public class WechatPayConfig {
 
-    private String appId;
-    private String mchId;
-    private String apiV3Key;
-    private String mchSerialNo;
-    private String privateKeyPath;
-    private String notifyUrl;
-    private String gatewayUrl = "https://api.mch.weixin.qq.com";
+    private final PaymentConfigService configService;
 
-    /**
-     * 生成微信支付APIv3签名
-     * 格式: WECHATPAY2-SHA256-RSA2048 mchid="...",nonce_str="...",signature="...",timestamp="...",serial_no="..."
-     */
+    public WechatPayConfig(PaymentConfigService configService) {
+        this.configService = configService;
+    }
+
+    public String getAppId() { return configService.getConfig("WECHAT").getAppId(); }
+    public String getMchId() { return configService.getConfig("WECHAT").getMchId(); }
+    public String getApiV3Key() { return configService.getConfig("WECHAT").getApiV3Key(); }
+    public String getMchSerialNo() { return configService.getConfig("WECHAT").getMchSerialNo(); }
+    public String getPrivateKeyPath() { return configService.getConfig("WECHAT").getPrivateKeyPath(); }
+    public String getNotifyUrl() { return configService.getConfig("WECHAT").getNotifyUrl(); }
+    public String getGatewayUrl() { return configService.getConfig("WECHAT").getGatewayUrl(); }
+
     public String buildAuthorization(String method, String url, String body) {
         try {
             long timestamp = System.currentTimeMillis() / 1000;
@@ -41,16 +40,13 @@ public class WechatPayConfig {
 
             return String.format(
                     "WECHATPAY2-SHA256-RSA2048 mchid=\"%s\",nonce_str=\"%s\",signature=\"%s\",timestamp=\"%d\",serial_no=\"%s\"",
-                    mchId, nonce, signature, timestamp, mchSerialNo);
+                    getMchId(), nonce, signature, timestamp, getMchSerialNo());
         } catch (Exception e) {
             log.error("微信支付签名失败", e);
             throw new RuntimeException("微信签名失败: " + e.getMessage());
         }
     }
 
-    /**
-     * 使用商户私钥对报文签名
-     */
     private String signWithPrivateKey(String message) throws Exception {
         String pkcs8Key = loadPrivateKey();
         if (pkcs8Key == null || pkcs8Key.isEmpty()) {
@@ -72,10 +68,8 @@ public class WechatPayConfig {
         return Base64.getEncoder().encodeToString(signature.sign());
     }
 
-    /**
-     * 加载商户私钥（实际从文件路径加载）
-     */
     private String loadPrivateKey() {
+        String privateKeyPath = getPrivateKeyPath();
         if (privateKeyPath != null && !privateKeyPath.isEmpty()) {
             try {
                 return new String(java.nio.file.Files.readAllBytes(
@@ -87,10 +81,8 @@ public class WechatPayConfig {
         return "";
     }
 
-    /**
-     * HMAC-SHA256 用于回调验签
-     */
     public String hmacSha256(String data) {
+        String apiV3Key = getApiV3Key();
         if (apiV3Key == null || apiV3Key.isEmpty()) {
             log.warn("微信APIv3密钥未配置，使用模拟HMAC");
             return "SIMULATED_HMAC_" + System.currentTimeMillis();

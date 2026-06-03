@@ -53,6 +53,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/ai/config/**").authenticated()
+                        .requestMatchers("/api/payment/config/**").authenticated()
                         .requestMatchers(
                                 "/api/auth/register",
                                 "/api/auth/captcha",
@@ -63,6 +64,7 @@ public class SecurityConfig {
                                 "/api/monitor/server/health",
                                 "/api/logs/health",
                                 "/api/monitor/jvm/memory/chart",
+                                "/api/payment/stats/chart",
                                 "/swagger-ui.html",
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**",

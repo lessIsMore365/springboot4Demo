@@ -16,9 +16,12 @@ public interface PaymentService {
      * @param body 商品描述
      * @param amount 金额
      * @param paymentMethod 支付方式 ALIPAY/WECHAT
+     * @param tradeType 交易类型 PAGE/WAP/APP/JSAPI
+     * @param bizType 业务分类 ORDER/RECHARGE/VIP/...（可选）
+     * @param remark 备注（可选）
      * @return 支付订单（含支付链接/二维码等信息）
      */
-    Map<String, Object> createPayment(String subject, String body, BigDecimal amount, String paymentMethod);
+    Map<String, Object> createPayment(String subject, String body, BigDecimal amount, String paymentMethod, String tradeType, String bizType, String remark);
 
     /**
      * 支付宝页面支付
@@ -83,7 +86,7 @@ public interface PaymentService {
     /**
      * 异步创建支付订单 - 虚拟线程
      */
-    CompletableFuture<Map<String, Object>> createPaymentAsync(String subject, String body, BigDecimal amount, String paymentMethod);
+    CompletableFuture<Map<String, Object>> createPaymentAsync(String subject, String body, BigDecimal amount, String paymentMethod, String tradeType, String bizType, String remark);
 
     /**
      * 自动关闭超时未支付订单（超过45分钟）

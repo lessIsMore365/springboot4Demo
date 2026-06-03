@@ -12,6 +12,7 @@ import org.example.entity.PaymentNotifyLog;
 import org.example.entity.PaymentOrder;
 import org.example.mapper.PaymentNotifyLogMapper;
 import org.example.mapper.PaymentOrderMapper;
+import org.example.payment.service.PaymentConfigService;
 import org.example.service.PaymentService;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -33,19 +34,39 @@ public class PaymentServiceImpl implements PaymentService {
 
     private final PaymentOrderMapper paymentOrderMapper;
     private final PaymentNotifyLogMapper notifyLogMapper;
+    private final PaymentConfigService paymentConfigService;
     private final AlipayConfig alipayConfig;
     private final WechatPayConfig wechatPayConfig;
     private final ObjectMapper objectMapper;
     private final HttpServletRequest request;
 
     private static final DateTimeFormatter ORDER_NO_DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    private static final Set<String> VALID_METHODS = Set.of("ALIPAY", "WECHAT");
+    private static final Set<String> VALID_TRADE_TYPES = Set.of("PAGE", "WAP", "APP", "JSAPI");
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Map<String, Object> createPayment(String subject, String body, BigDecimal amount, String paymentMethod) {
+    public Map<String, Object> createPayment(String subject, String body, BigDecimal amount, String paymentMethod, String tradeType, String bizType, String remark) {
         Thread currentThread = Thread.currentThread();
-        log.info("创建支付订单 - 方式: {}, 金额: {}, 线程: {}, 虚拟线程: {}",
-                paymentMethod, amount, currentThread, currentThread.isVirtual());
+        log.info("创建支付订单 - 方式: {}, 金额: {}, 交易类型: {}, 线程: {}, 虚拟线程: {}",
+                paymentMethod, amount, tradeType, currentThread, currentThread.isVirtual());
+
+        if (!VALID_METHODS.contains(paymentMethod.toUpperCase())) {
+            throw new RuntimeException("不支持的支付方式: " + paymentMethod + "，仅支持 ALIPAY / WECHAT");
+        }
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new RuntimeException("支付金额必须大于0");
+        }
+
+        String tt = tradeType != null ? tradeType.toUpperCase() : "PAGE";
+        if (!VALID_TRADE_TYPES.contains(tt)) {
+            throw new RuntimeException("不支持的交易类型: " + tradeType + "，仅支持 PAGE / WAP / APP / JSAPI");
+        }
+
+        String validationError = paymentConfigService.validateConfig(paymentMethod);
+        if (validationError != null) {
+            throw new RuntimeException(validationError);
+        }
 
         String orderNo = generateOrderNo(paymentMethod);
 
@@ -55,6 +76,8 @@ public class PaymentServiceImpl implements PaymentService {
         order.setAmount(amount.setScale(2, RoundingMode.HALF_UP));
         order.setSubject(subject);
         order.setBody(body);
+        order.setBizType(bizType != null && !bizType.isBlank() ? bizType : null);
+        order.setRemark(remark != null && !remark.isBlank() ? remark : null);
         order.setStatus("PENDING");
         paymentOrderMapper.insert(order);
 
@@ -62,17 +85,265 @@ public class PaymentServiceImpl implements PaymentService {
         result.put("orderNo", orderNo);
         result.put("amount", order.getAmount());
         result.put("paymentMethod", order.getPaymentMethod());
+        result.put("tradeType", tt);
         result.put("status", "PENDING");
 
+        Map<String, Object> payData;
         if ("ALIPAY".equalsIgnoreCase(paymentMethod)) {
-            String payForm = alipayPagePay(orderNo);
-            result.put("payForm", payForm);
-        } else if ("WECHAT".equalsIgnoreCase(paymentMethod)) {
-            String codeUrl = wechatNativePay(orderNo);
-            result.put("codeUrl", codeUrl);
+            payData = buildAlipayPayData(orderNo, tt);
+        } else {
+            payData = buildWechatPayData(orderNo, tt);
+        }
+        result.putAll(payData);
+
+        // 保存支付链接到订单，方便未支付时从列表/详情继续支付
+        try {
+            order.setPayData(objectMapper.writeValueAsString(payData));
+            paymentOrderMapper.updateById(order);
+        } catch (Exception e) {
+            log.error("保存支付链接失败 - 订单号: {}", orderNo, e);
         }
 
         return result;
+    }
+
+    // ==================== 支付宝 — 按交易类型构建支付数据 ====================
+
+    private Map<String, Object> buildAlipayPayData(String orderNo, String tradeType) {
+        PaymentOrder order = queryOrder(orderNo);
+        Map<String, Object> payData = new LinkedHashMap<>();
+
+        switch (tradeType) {
+            case "PAGE" -> {
+                // PC 网页支付 → HTML 表单自动跳转
+                payData.put("payForm", buildAlipayForm(order, "alipay.trade.page.pay", "FAST_INSTANT_TRADE_PAY"));
+            }
+            case "WAP" -> {
+                // 移动 H5 支付 → 重定向 URL
+                String redirectUrl = buildAlipayRedirectUrl(order, "alipay.trade.wap.pay", "QUICK_WAP_WAY");
+                payData.put("redirectUrl", redirectUrl);
+            }
+            case "APP" -> {
+                // App 支付 → orderString 给 SDK 调起
+                payData.put("orderString", buildAlipayOrderString(order));
+            }
+            case "JSAPI" -> {
+                // 小程序/生活号 → tradeNo
+                payData.put("tradeNo", buildAlipayTradeNo(order));
+            }
+        }
+        return payData;
+    }
+
+    private String buildAlipayForm(PaymentOrder order, String method, String productCode) {
+        Map<String, String> bizContent = new LinkedHashMap<>();
+        bizContent.put("out_trade_no", order.getOrderNo());
+        bizContent.put("total_amount", order.getAmount().toString());
+        bizContent.put("subject", order.getSubject());
+        bizContent.put("body", order.getBody() != null ? order.getBody() : "");
+        bizContent.put("product_code", productCode);
+        bizContent.put("timeout_express", getAlipayTimeout());
+
+        Map<String, String> params = buildAlipayParams(method, bizContent);
+        return buildAutoSubmitHtml(params);
+    }
+
+    private String buildAlipayRedirectUrl(PaymentOrder order, String method, String productCode) {
+        Map<String, String> bizContent = new LinkedHashMap<>();
+        bizContent.put("out_trade_no", order.getOrderNo());
+        bizContent.put("total_amount", order.getAmount().toString());
+        bizContent.put("subject", order.getSubject());
+        bizContent.put("body", order.getBody() != null ? order.getBody() : "");
+        bizContent.put("product_code", productCode);
+        bizContent.put("timeout_express", getAlipayTimeout());
+
+        Map<String, String> params = buildAlipayParams(method, bizContent);
+        // 拼接 GET 重定向 URL
+        StringBuilder url = new StringBuilder(alipayConfig.getGatewayUrl()).append("?");
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            url.append(e.getKey()).append("=").append(java.net.URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8)).append("&");
+        }
+        return url.toString();
+    }
+
+    private String buildAlipayOrderString(PaymentOrder order) {
+        Map<String, String> bizContent = new LinkedHashMap<>();
+        bizContent.put("out_trade_no", order.getOrderNo());
+        bizContent.put("total_amount", order.getAmount().toString());
+        bizContent.put("subject", order.getSubject());
+        bizContent.put("body", order.getBody() != null ? order.getBody() : "");
+        bizContent.put("product_code", "QUICK_MSECURITY_PAY");
+        bizContent.put("timeout_express", getAlipayTimeout());
+
+        Map<String, String> params = buildAlipayParams("alipay.trade.app.pay", bizContent);
+        // App 支付返回 key=value&key=value 格式的 orderString
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            if (sb.length() > 0) sb.append("&");
+            sb.append(e.getKey()).append("=").append(java.net.URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8));
+        }
+        return sb.toString();
+    }
+
+    private String buildAlipayTradeNo(PaymentOrder order) {
+        // JSAPI 支付返回 tradeNo，前端用 tradeNo 调起支付
+        log.info("支付宝 JSAPI 支付 — tradeNo 已生成，订单号: {}", order.getOrderNo());
+        return "ALIPAY_TN_" + order.getOrderNo() + "_" + System.currentTimeMillis();
+    }
+
+    private Map<String, String> buildAlipayParams(String method, Map<String, String> bizContent) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("app_id", alipayConfig.getAppId());
+        params.put("method", method);
+        params.put("charset", "UTF-8");
+        params.put("sign_type", alipayConfig.getSignType());
+        params.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        params.put("version", "1.0");
+        params.put("notify_url", alipayConfig.getNotifyUrl());
+        if (alipayConfig.getReturnUrl() != null && !alipayConfig.getReturnUrl().isBlank()) {
+            params.put("return_url", alipayConfig.getReturnUrl());
+        }
+        try {
+            params.put("biz_content", objectMapper.writeValueAsString(bizContent));
+        } catch (Exception e) {
+            throw new RuntimeException("构建支付参数失败", e);
+        }
+        String signContent = alipayConfig.buildSignContent(params);
+        params.put("sign", alipayConfig.sign(signContent));
+        return params;
+    }
+
+    private String buildAutoSubmitHtml(Map<String, String> params) {
+        StringBuilder html = new StringBuilder();
+        html.append("<form id=\"alipayForm\" action=\"").append(alipayConfig.getGatewayUrl())
+                .append("\" method=\"POST\">\n");
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            html.append("  <input type=\"hidden\" name=\"").append(entry.getKey())
+                    .append("\" value=\"").append(escapeHtml(entry.getValue())).append("\"/>\n");
+        }
+        html.append("  <script>document.getElementById('alipayForm').submit();</script>\n");
+        html.append("</form>");
+        return html.toString();
+    }
+
+    // ==================== 微信支付 — 按交易类型构建支付数据 ====================
+
+    private Map<String, Object> buildWechatPayData(String orderNo, String tradeType) {
+        PaymentOrder order = queryOrder(orderNo);
+        Map<String, Object> payData = new LinkedHashMap<>();
+        int totalCents = order.getAmount().multiply(new BigDecimal("100")).intValue();
+
+        switch (tradeType) {
+            case "PAGE" -> {
+                // PC 扫码支付 → codeUrl
+                payData.put("codeUrl", buildWechatNativePay(order, totalCents));
+            }
+            case "WAP" -> {
+                // 移动 H5 支付 → h5_url
+                payData.put("h5Url", buildWechatH5Pay(order, totalCents));
+            }
+            case "APP" -> {
+                // App 支付 → prepay_id + 签名参数
+                payData.putAll(buildWechatAppPay(order, totalCents));
+            }
+            case "JSAPI" -> {
+                // 小程序/公众号 → prepay_id + 签名参数
+                payData.putAll(buildWechatJsapiPay(order, totalCents));
+            }
+        }
+        return payData;
+    }
+
+    private String buildWechatNativePay(PaymentOrder order, int totalCents) {
+        String prepayId = createWechatPrepayId(order, totalCents, "NATIVE");
+        String simulatedCodeUrl = "weixin://wxpay/bizpayurl?pr=wx" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        log.info("微信Native支付二维码: {} (prepay_id={})", simulatedCodeUrl, prepayId);
+        return simulatedCodeUrl;
+    }
+
+    private String buildWechatH5Pay(PaymentOrder order, int totalCents) {
+        String prepayId = createWechatPrepayId(order, totalCents, "MWEB");
+        String clientIp = getClientIp();
+        String simulatedH5Url = "https://wx.tenpay.com/cgi-bin/mmpayweb-bin/checkmweb?prepay_id=" + prepayId + "&package=&redirect_url=";
+        log.info("微信H5支付链接: {} (ip={})", simulatedH5Url, clientIp);
+        return simulatedH5Url;
+    }
+
+    private Map<String, Object> buildWechatAppPay(PaymentOrder order, int totalCents) {
+        String prepayId = createWechatPrepayId(order, totalCents, "APP");
+        String nonceStr = UUID.randomUUID().toString().replace("-", "").substring(0, 32);
+        long timestamp = System.currentTimeMillis() / 1000;
+
+        // 二次签名（App 调起支付需要）
+        String signStr = wechatPayConfig.getAppId() + "\n" + timestamp + "\n" + nonceStr + "\n" + prepayId + "\n";
+        String paySign = wechatPayConfig.hmacSha256(signStr);
+
+        Map<String, Object> appParams = new LinkedHashMap<>();
+        appParams.put("appid", wechatPayConfig.getAppId());
+        appParams.put("partnerid", wechatPayConfig.getMchId());
+        appParams.put("prepayid", prepayId);
+        appParams.put("package", "Sign=WXPay");
+        appParams.put("noncestr", nonceStr);
+        appParams.put("timestamp", timestamp);
+        appParams.put("sign", paySign);
+        return appParams;
+    }
+
+    private Map<String, Object> buildWechatJsapiPay(PaymentOrder order, int totalCents) {
+        String prepayId = createWechatPrepayId(order, totalCents, "JSAPI");
+        String nonceStr = UUID.randomUUID().toString().replace("-", "").substring(0, 32);
+        long timeStamp = System.currentTimeMillis() / 1000;
+
+        // JSAPI 调起支付签名
+        String packageStr = "prepay_id=" + prepayId;
+        String signStr = wechatPayConfig.getAppId() + "\n" + timeStamp + "\n" + nonceStr + "\n" + packageStr + "\n";
+        String paySign = wechatPayConfig.hmacSha256(signStr);
+
+        Map<String, Object> jsapiParams = new LinkedHashMap<>();
+        jsapiParams.put("appId", wechatPayConfig.getAppId());
+        jsapiParams.put("timeStamp", String.valueOf(timeStamp));
+        jsapiParams.put("nonceStr", nonceStr);
+        jsapiParams.put("package", packageStr);
+        jsapiParams.put("signType", "HMAC-SHA256");
+        jsapiParams.put("paySign", paySign);
+        return jsapiParams;
+    }
+
+    private String createWechatPrepayId(PaymentOrder order, int totalCents, String tradeType) {
+        try {
+            String url = "/v3/pay/transactions/" + ("NATIVE".equals(tradeType) ? "native" :
+                    "MWEB".equals(tradeType) ? "h5" : "jsapi");
+
+            Map<String, Object> reqBody = new LinkedHashMap<>();
+            reqBody.put("appid", wechatPayConfig.getAppId());
+            reqBody.put("mchid", wechatPayConfig.getMchId());
+            reqBody.put("description", order.getSubject());
+            reqBody.put("out_trade_no", order.getOrderNo());
+            reqBody.put("notify_url", wechatPayConfig.getNotifyUrl());
+            reqBody.put("amount", Map.of("total", totalCents, "currency", "CNY"));
+
+            if ("MWEB".equals(tradeType)) {
+                Map<String, String> sceneInfo = new LinkedHashMap<>();
+                sceneInfo.put("payer_client_ip", getClientIp());
+                sceneInfo.put("h5_info", "{\"type\":\"Wap\"}");
+                reqBody.put("scene_info", sceneInfo);
+            }
+
+            String body = objectMapper.writeValueAsString(reqBody);
+            String auth = wechatPayConfig.buildAuthorization("POST", url, body);
+
+            // 模拟 prepay_id，实际部署时调用微信 API
+            // String response = RestClient.create(wechatPayConfig.getGatewayUrl())
+            //         .post().uri(url).header("Authorization", auth)
+            //         .header("Accept", "application/json").header("Content-Type", "application/json")
+            //         .body(body).retrieve().body(String.class);
+            // return objectMapper.readTree(response).get("prepay_id").asText();
+
+            return "wx_prepay_" + tradeType.toLowerCase() + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        } catch (Exception e) {
+            log.error("微信{}支付异常 - 订单号: {}", tradeType, order.getOrderNo(), e);
+            throw new RuntimeException("微信支付创建失败: " + e.getMessage());
+        }
     }
 
     @Override
@@ -92,7 +363,7 @@ public class PaymentServiceImpl implements PaymentService {
         bizContent.put("subject", order.getSubject());
         bizContent.put("body", order.getBody() != null ? order.getBody() : "");
         bizContent.put("product_code", "FAST_INSTANT_TRADE_PAY");
-        bizContent.put("timeout_express", "30m");
+        bizContent.put("timeout_express", getAlipayTimeout());
 
         Map<String, String> params = new LinkedHashMap<>();
         params.put("app_id", alipayConfig.getAppId());
@@ -190,6 +461,11 @@ public class PaymentServiceImpl implements PaymentService {
         log.info("支付宝异步通知 - 线程: {}, 虚拟线程: {}", currentThread, currentThread.isVirtual());
 
         String orderNo = params.get("out_trade_no");
+        if (orderNo == null || orderNo.isBlank()) {
+            log.error("支付宝通知缺少订单号");
+            saveNotifyLog("ALIPAY", null, params.toString(), null, "FAILED", "通知缺少订单号", getClientIp());
+            return "failure";
+        }
         String tradeNo = params.get("trade_no");
         String tradeStatus = params.get("trade_status");
         String buyerId = params.get("buyer_id");
@@ -303,6 +579,12 @@ public class PaymentServiceImpl implements PaymentService {
             return false;
         }
 
+        String validationError = paymentConfigService.validateConfig(order.getPaymentMethod());
+        if (validationError != null) {
+            log.warn("关单失败，支付配置不完整 - 订单号: {}, 原因: {}", orderNo, validationError);
+            throw new RuntimeException(validationError);
+        }
+
         // 支付宝关单
         if ("ALIPAY".equalsIgnoreCase(order.getPaymentMethod())) {
             Map<String, String> bizContent = new LinkedHashMap<>();
@@ -348,6 +630,15 @@ public class PaymentServiceImpl implements PaymentService {
         PaymentOrder order = queryOrder(orderNo);
         if (order == null || !"SUCCESS".equals(order.getStatus())) {
             throw new RuntimeException("订单不存在或未支付");
+        }
+
+        String validationError = paymentConfigService.validateConfig(order.getPaymentMethod());
+        if (validationError != null) {
+            throw new RuntimeException(validationError);
+        }
+
+        if (refundAmount == null || refundAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new RuntimeException("退款金额必须大于0");
         }
 
         BigDecimal maxRefund = order.getAmount().subtract(
@@ -406,7 +697,7 @@ public class PaymentServiceImpl implements PaymentService {
         Thread currentThread = Thread.currentThread();
         log.info("扫描超时未支付订单 - 线程: {}, 虚拟线程: {}", currentThread, currentThread.isVirtual());
 
-        LocalDateTime deadline = LocalDateTime.now().minusMinutes(45);
+        LocalDateTime deadline = getOrderExpireDeadline();
 
         LambdaQueryWrapper<PaymentOrder> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(PaymentOrder::getStatus, "PENDING")
@@ -419,7 +710,8 @@ public class PaymentServiceImpl implements PaymentService {
             return 0;
         }
 
-        log.info("发现 {} 笔超时未支付订单（超过45分钟），开始批量关闭", expiredOrders.size());
+        int expireMinutes = paymentConfigService.getOrderExpireMinutes("ALIPAY");
+        log.info("发现 {} 笔超时未支付订单（超过{}分钟），开始批量关闭", expiredOrders.size(), expireMinutes);
 
         int closedCount = 0;
         for (PaymentOrder order : expiredOrders) {
@@ -468,10 +760,21 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Async("taskExecutor")
     @Override
-    public CompletableFuture<Map<String, Object>> createPaymentAsync(String subject, String body, BigDecimal amount, String paymentMethod) {
+    public CompletableFuture<Map<String, Object>> createPaymentAsync(String subject, String body, BigDecimal amount, String paymentMethod, String tradeType, String bizType, String remark) {
         Thread currentThread = Thread.currentThread();
-        log.info("异步创建支付订单 - 方式: {}, 线程: {}, 虚拟线程: {}", paymentMethod, currentThread, currentThread.isVirtual());
-        return CompletableFuture.completedFuture(createPayment(subject, body, amount, paymentMethod));
+        log.info("异步创建支付订单 - 方式: {}, 交易类型: {}, 业务: {}, 线程: {}, 虚拟线程: {}",
+                paymentMethod, tradeType, bizType, currentThread, currentThread.isVirtual());
+        return CompletableFuture.completedFuture(createPayment(subject, body, amount, paymentMethod, tradeType, bizType, remark));
+    }
+
+    private LocalDateTime getOrderExpireDeadline() {
+        int minutes = paymentConfigService.getOrderExpireMinutes("ALIPAY");
+        return LocalDateTime.now().minusMinutes(minutes);
+    }
+
+    private String getAlipayTimeout() {
+        int minutes = paymentConfigService.getOrderExpireMinutes("ALIPAY");
+        return minutes + "m";
     }
 
     private String generateOrderNo(String paymentMethod) {

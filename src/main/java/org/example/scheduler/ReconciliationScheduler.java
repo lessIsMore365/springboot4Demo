@@ -34,7 +34,7 @@ public class ReconciliationScheduler {
         try {
             int closedCount = paymentService.closeExpiredOrders();
             if (closedCount > 0) {
-                log.warn("自动关闭 {} 笔超时未支付订单（超过45分钟）", closedCount);
+                log.warn("自动关闭 {} 笔超时未支付订单", closedCount);
             }
         } catch (Exception e) {
             log.error("自动关闭超时订单失败", e);

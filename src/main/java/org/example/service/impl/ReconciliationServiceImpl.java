@@ -32,12 +32,18 @@ public class ReconciliationServiceImpl implements ReconciliationService {
     private final ReconciliationRecordMapper reconRecordMapper;
     private final ReconciliationDetailMapper reconDetailMapper;
 
+    private static final Set<String> VALID_METHODS = Set.of("ALIPAY", "WECHAT");
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public ReconciliationRecord reconcile(LocalDate reconDate, String paymentMethod) {
         Thread currentThread = Thread.currentThread();
         log.info("开始对帐 - 日期: {}, 方式: {}, 线程: {}, 虚拟线程: {}",
                 reconDate, paymentMethod, currentThread, currentThread.isVirtual());
+
+        if (!VALID_METHODS.contains(paymentMethod.toUpperCase())) {
+            throw new RuntimeException("不支持的支付方式: " + paymentMethod + "，仅支持 ALIPAY / WECHAT");
+        }
 
         // 1. 获取本地订单
         List<Map<String, Object>> localOrders = getLocalOrdersForRecon(reconDate, paymentMethod);

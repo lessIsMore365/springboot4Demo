@@ -28,6 +28,12 @@ public class PaymentOrder {
     /** 商品描述 */
     private String body;
 
+    /** 业务分类: ORDER/RECHARGE/VIP/... 用于分类统计 */
+    private String bizType;
+
+    /** 备注 */
+    private String remark;
+
     /** 订单状态: PENDING/SUCCESS/CLOSED/REFUND */
     private String status;
 
@@ -45,6 +51,9 @@ public class PaymentOrder {
 
     /** 通知原始数据(JSON) */
     private String notifyData;
+
+    /** 支付链接/表单数据(JSON)，未支付订单可据此继续支付 */
+    private String payData;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;

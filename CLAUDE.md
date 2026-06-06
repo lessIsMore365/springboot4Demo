@@ -2648,6 +2648,193 @@ public Map<String, Object> createPayment(...) { ... }
 
 ---
 
+### 12g2. 菜单管理端点（需要认证）
+
+基于 RBAC 的菜单权限管理，不同角色可见不同菜单树。基础路径: `/api/menus`
+
+| 方法 | 路径 | 说明 | 权限 |
+|------|------|------|------|
+| `GET` | `/api/menus/tree` | 获取完整菜单树（管理用） | ADMIN |
+| `GET` | `/api/menus/user` | 获取当前用户可见菜单树 | 认证 |
+| `GET` | `/api/menus/role/{roleId}` | 获取角色的菜单ID列表 | ADMIN |
+| `POST` | `/api/menus` | 新增菜单 | ADMIN |
+| `PUT` | `/api/menus` | 更新菜单 | ADMIN |
+| `DELETE` | `/api/menus/{id}` | 删除菜单（级联删除子菜单） | ADMIN |
+| `PUT` | `/api/menus/role/{roleId}` | 为角色分配菜单 | ADMIN |
+
+#### `GET /api/menus/tree`（需要 ADMIN 角色）
+
+获取完整菜单树结构，用于管理端菜单管理页面的初始渲染。
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 100,
+      "parentId": 0,
+      "name": "系统管理",
+      "path": "/system",
+      "component": "",
+      "icon": "system",
+      "sortOrder": 1,
+      "menuType": "M",
+      "permission": "",
+      "visible": true,
+      "status": true,
+      "children": [
+        {
+          "id": 101,
+          "parentId": 100,
+          "name": "用户管理",
+          "path": "/system/user",
+          "component": "system/user/index",
+          "icon": "user",
+          "sortOrder": 1,
+          "menuType": "C",
+          "permission": "user:read",
+          "visible": true,
+          "status": true,
+          "children": []
+        }
+      ]
+    }
+  ],
+  "timestamp": 1700000000000
+}
+```
+
+#### `GET /api/menus/user`（需要认证）⭐核心
+
+获取当前登录用户可见的菜单树。后端根据用户角色在 `sys_role_menu` 表中查找分配的菜单，过滤隐藏/停用的菜单，构建树结构返回。
+
+**使用方式:**
+```
+GET /api/menus/user
+Authorization: Bearer <access_token>
+```
+
+**响应示例 (admin):**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 100, "parentId": 0, "name": "系统管理", "path": "/system", "icon": "system",
+      "menuType": "M", "visible": true, "status": true,
+      "children": [
+        {"id": 101, "name": "用户管理", "path": "/system/user", "menuType": "C", "permission": "user:read", ...},
+        {"id": 102, "name": "角色管理", "path": "/system/role", "menuType": "C", "permission": "role:read", ...}
+      ]
+    },
+    {
+      "id": 200, "parentId": 0, "name": "支付管理", "path": "/payment", "icon": "money",
+      "menuType": "M", "visible": true, "status": true,
+      "children": [
+        {"id": 201, "name": "支付订单", "path": "/payment/order", "menuType": "C", ...},
+        {"id": 202, "name": "对帐管理", "path": "/payment/reconciliation", "menuType": "C", ...}
+      ]
+    }
+  ],
+  "timestamp": 1700000000000
+}
+```
+
+**响应示例 (普通用户 user):**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 200, "parentId": 0, "name": "支付管理", "path": "/payment", "icon": "money",
+      "menuType": "M", "visible": true, "status": true,
+      "children": [
+        {"id": 201, "name": "支付订单", "path": "/payment/order", "menuType": "C", ...},
+        {"id": 202, "name": "对帐管理", "path": "/payment/reconciliation", "menuType": "C", ...},
+        {"id": 203, "name": "支付统计", "path": "/payment/stats", "menuType": "C", ...}
+      ]
+    },
+    {
+      "id": 300, "parentId": 0, "name": "监控管理", "path": "/monitor", "icon": "monitor",
+      "menuType": "M", "visible": true, "status": true,
+      "children": [
+        {"id": 301, "name": "JVM 监控", "path": "/monitor/jvm", "menuType": "C", ...},
+        {"id": 302, "name": "数据库监控", "path": "/monitor/db", "menuType": "C", ...},
+        {"id": 303, "name": "操作日志", "path": "/monitor/operlog", "menuType": "C", ...},
+        {"id": 304, "name": "在线用户", "path": "/monitor/online", "menuType": "C", ...}
+      ]
+    }
+  ],
+  "timestamp": 1700000000000
+}
+```
+
+#### `GET /api/menus/role/{roleId}`
+
+获取指定角色的菜单ID列表。
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [100, 101, 102, 103, 104, 200, 201, 202, 203, 300, 301, 302, 303, 304],
+  "timestamp": 1700000000000
+}
+```
+
+#### 菜单 CRUD
+
+**新增菜单:**
+```json
+POST /api/menus
+{
+  "parentId": 100,
+  "name": "字典管理",
+  "path": "/system/dict",
+  "component": "system/dict/index",
+  "icon": "dict",
+  "sortOrder": 5,
+  "menuType": "C",
+  "permission": "",
+  "visible": 0,
+  "status": 0
+}
+```
+
+**更新菜单:** `PUT /api/menus`，请求体同上（含 `id`）
+
+**删除菜单:** `DELETE /api/menus/{id}` — 自动级联删除子菜单及其角色关联
+
+#### `PUT /api/menus/role/{roleId}`
+
+为角色分配菜单。
+
+**请求体:**
+```json
+[100, 101, 102, 103, 104, 200, 201, 202, 203, 300, 301, 302, 303, 304]
+```
+
+**菜单类型说明:**
+| menuType | 含义 |
+|----------|------|
+| `M` | 目录（一级菜单项，不含路由组件） |
+| `C` | 菜单（二级页面菜单，对应前端路由） |
+| `F` | 按钮（页面内操作按钮，如新增/删除） |
+
+**数据库表:**
+- `sys_menu` — 菜单表（id, parent_id, name, path, component, icon, sort_order, menu_type, permission, visible, status）
+- `sys_role_menu` — 角色菜单关联表（role_id, menu_id）
+
+**鉴权流程:**
+```
+用户登录 → 获取角色 → 查 sys_role_menu → 获取菜单ID → 构建菜单树 → 前端渲染侧边栏
+     admin: 系统管理+支付管理+监控管理
+     user:  仅支付管理+监控管理（无系统管理）
+```
+
+---
+
 ### 12h. SpringDoc 接口文档（公开）
 
 #### Swagger UI
@@ -3947,6 +4134,8 @@ The project is configured to connect to a local PostgreSQL database:
 
 17. **Dict Management** - 字典类型/数据 CRUD，Redis 缓存（24h TTL），增删改自动刷新对应类型缓存。预置 6 个字典类型 + 19 条字典数据。
 
+17b. **Menu Management** — 基于 RBAC 的菜单权限管理。`sys_menu` 表存储菜单树结构（M=目录/C=菜单/F=按钮），`sys_role_menu` 存储角色菜单分配。`GET /api/menus/user` 根据当前用户的角色返回可见菜单树，前端直接渲染侧边栏。admin 全菜单，user 仅支付管理+监控管理。
+
 18. **SpringDoc** - 交互式 API 文档（Swagger UI），支持 Bearer JWT 认证，公开端点无需认证即可访问。
 
 19. **AI Module** — 参考 Pig AI 设计，集成多模型 AI 能力（DeepSeek/通义千问/Kimi/智谱GLM）。提供商参数支持 Web 端实时配置无需重启。功能包括：
@@ -3959,8 +4148,9 @@ The project is configured to connect to a local PostgreSQL database:
     - RAG 知识库（文档上传→Apache Tika 解析→切片→关键词检索→LLM 问答）
     - MCP 协议服务（JSON-RPC，暴露业务函数给外部 Agent）
 
-20. **Database Tables** - `schema.sql` 自动创建 20 张表（启动时 `mode: always`）:
+20. **Database Tables** - `schema.sql` 自动创建 22 张表（启动时 `mode: always`）:
     - `sys_user`, `sys_role`, `sys_permission`, `sys_user_role`, `sys_role_permission`
+    - `sys_menu`, `sys_role_menu`
     - `sys_oper_log`, `sys_dict_type`, `sys_dict_data`
     - `payment_order`, `payment_notify_log`, `payment_config`, `reconciliation_record`, `reconciliation_detail`
     - `ai_api_usage`, `ai_chat_session`, `ai_chat_history`
@@ -3970,6 +4160,7 @@ The project is configured to connect to a local PostgreSQL database:
     - 默认用户: `admin` / `user`（密码均为 `password`，BCrypt 加密）
     - 默认角色: `ROLE_ADMIN` / `ROLE_USER`
     - 14 个权限（用户/角色/权限管理 + 分配权限）
+    - 13 条菜单（系统管理/支付管理/监控管理三大目录，admin 全菜单，user 仅后两项）
     - 5 条示例支付订单，2 条示例对帐记录，3 条示例对帐明细
     
     **注意**: 默认密码仅用于演示，生产环境请更换。

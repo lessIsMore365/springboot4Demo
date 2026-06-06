@@ -102,6 +102,47 @@ CREATE INDEX IF NOT EXISTS idx_sys_role_permission_role_id ON sys_role_permissio
 CREATE INDEX IF NOT EXISTS idx_sys_role_permission_permission_id ON sys_role_permission(permission_id);
 
 -- =============================================
+-- 菜单管理表
+-- =============================================
+
+-- 创建菜单表 sys_menu
+CREATE TABLE IF NOT EXISTS sys_menu (
+    id BIGINT PRIMARY KEY,
+    parent_id BIGINT DEFAULT 0,
+    name VARCHAR(100) NOT NULL,
+    path VARCHAR(200),
+    component VARCHAR(255),
+    icon VARCHAR(100),
+    sort_order INTEGER DEFAULT 0,
+    menu_type CHAR(1) DEFAULT 'C',
+    permission VARCHAR(100),
+    visible INTEGER DEFAULT 0,
+    status INTEGER DEFAULT 0,
+    create_time TIMESTAMP,
+    update_time TIMESTAMP,
+    deleted INTEGER DEFAULT 0,
+    version INTEGER DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_sys_menu_parent_id ON sys_menu(parent_id);
+CREATE INDEX IF NOT EXISTS idx_sys_menu_sort_order ON sys_menu(sort_order);
+
+-- 创建角色菜单关联表 sys_role_menu
+CREATE TABLE IF NOT EXISTS sys_role_menu (
+    id BIGINT PRIMARY KEY,
+    role_id BIGINT NOT NULL,
+    menu_id BIGINT NOT NULL,
+    create_time TIMESTAMP,
+    update_time TIMESTAMP,
+    deleted INTEGER DEFAULT 0,
+    version INTEGER DEFAULT 1
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sys_role_menu_unique ON sys_role_menu(role_id, menu_id) WHERE deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_sys_role_menu_role_id ON sys_role_menu(role_id);
+CREATE INDEX IF NOT EXISTS idx_sys_role_menu_menu_id ON sys_role_menu(menu_id);
+
+-- =============================================
 -- 支付模块 (Payment Module) 表
 -- =============================================
 

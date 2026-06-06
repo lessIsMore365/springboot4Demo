@@ -160,3 +160,62 @@ INSERT INTO ai_provider_config (id, name, display_name, api_key, base_url, model
 (9003, 'kimi',    'Kimi (月之暗面)', '', 'https://api.moonshot.cn',                         'moonshot-v1-8k', 4096, 0.7, 12.0, TRUE, 3, NOW(), NOW()),
 (9004, 'glm',     '智谱 GLM',       '', 'https://open.bigmodel.cn/api/paas/v4',             'glm-4-flash',    4096, 0.7, 5.0,  TRUE, 4, NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
+
+-- =============================================
+-- 菜单管理初始数据
+-- =============================================
+
+-- 菜单数据 (M=目录, C=菜单)
+INSERT INTO sys_menu (id, parent_id, name, path, component, icon, sort_order, menu_type, permission, visible, status, create_time, update_time, version, deleted) VALUES
+-- 系统管理
+(100, 0, '系统管理', '/system', '', 'system', 1, 'M', '', 0, 0, NOW(), NOW(), 1, 0),
+(101, 100, '用户管理', '/system/user', 'system/user/index', 'user', 1, 'C', 'user:read', 0, 0, NOW(), NOW(), 1, 0),
+(102, 100, '角色管理', '/system/role', 'system/role/index', 'peoples', 2, 'C', 'role:read', 0, 0, NOW(), NOW(), 1, 0),
+(103, 100, '权限管理', '/system/permission', 'system/permission/index', 'lock', 3, 'C', 'permission:read', 0, 0, NOW(), NOW(), 1, 0),
+(104, 100, '菜单管理', '/system/menu', 'system/menu/index', 'tree-table', 4, 'C', '', 0, 0, NOW(), NOW(), 1, 0),
+
+-- 支付管理
+(200, 0, '支付管理', '/payment', '', 'money', 2, 'M', '', 0, 0, NOW(), NOW(), 1, 0),
+(201, 200, '支付订单', '/payment/order', 'payment/order/index', 'list', 1, 'C', '', 0, 0, NOW(), NOW(), 1, 0),
+(202, 200, '对帐管理', '/payment/reconciliation', 'payment/reconciliation/index', 'chart', 2, 'C', '', 0, 0, NOW(), NOW(), 1, 0),
+(203, 200, '支付统计', '/payment/stats', 'payment/stats/index', 'chart', 3, 'C', '', 0, 0, NOW(), NOW(), 1, 0),
+
+-- 监控管理
+(300, 0, '监控管理', '/monitor', '', 'monitor', 3, 'M', '', 0, 0, NOW(), NOW(), 1, 0),
+(301, 300, 'JVM 监控', '/monitor/jvm', 'monitor/jvm/index', 'dashboard', 1, 'C', '', 0, 0, NOW(), NOW(), 1, 0),
+(302, 300, '数据库监控', '/monitor/db', 'monitor/db/index', 'table', 2, 'C', '', 0, 0, NOW(), NOW(), 1, 0),
+(303, 300, '操作日志', '/monitor/operlog', 'monitor/operlog/index', 'log', 3, 'C', '', 0, 0, NOW(), NOW(), 1, 0),
+(304, 300, '在线用户', '/monitor/online', 'monitor/online/index', 'online', 4, 'C', '', 0, 0, NOW(), NOW(), 1, 0)
+ON CONFLICT (id) DO NOTHING;
+
+-- 角色菜单分配 (sys_role_menu 从 30001 开始)
+-- 管理员角色(role_id=1) → 所有 13 个菜单
+INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, version, deleted) VALUES
+(30001, 1, 100, NOW(), NOW(), 1, 0),
+(30002, 1, 101, NOW(), NOW(), 1, 0),
+(30003, 1, 102, NOW(), NOW(), 1, 0),
+(30004, 1, 103, NOW(), NOW(), 1, 0),
+(30005, 1, 104, NOW(), NOW(), 1, 0),
+(30006, 1, 200, NOW(), NOW(), 1, 0),
+(30007, 1, 201, NOW(), NOW(), 1, 0),
+(30008, 1, 202, NOW(), NOW(), 1, 0),
+(30009, 1, 203, NOW(), NOW(), 1, 0),
+(30010, 1, 300, NOW(), NOW(), 1, 0),
+(30011, 1, 301, NOW(), NOW(), 1, 0),
+(30012, 1, 302, NOW(), NOW(), 1, 0),
+(30013, 1, 303, NOW(), NOW(), 1, 0),
+(30014, 1, 304, NOW(), NOW(), 1, 0)
+ON CONFLICT (id) DO NOTHING;
+
+-- 普通用户角色(role_id=2) → 支付管理 + 监控管理（不含系统管理）
+INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, version, deleted) VALUES
+(30015, 2, 200, NOW(), NOW(), 1, 0),
+(30016, 2, 201, NOW(), NOW(), 1, 0),
+(30017, 2, 202, NOW(), NOW(), 1, 0),
+(30018, 2, 203, NOW(), NOW(), 1, 0),
+(30019, 2, 300, NOW(), NOW(), 1, 0),
+(30020, 2, 301, NOW(), NOW(), 1, 0),
+(30021, 2, 302, NOW(), NOW(), 1, 0),
+(30022, 2, 303, NOW(), NOW(), 1, 0),
+(30023, 2, 304, NOW(), NOW(), 1, 0)
+ON CONFLICT (id) DO NOTHING;

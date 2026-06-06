@@ -2,6 +2,7 @@ package org.example.config;
 
 import com.baomidou.mybatisplus.core.handlers.MetaObjectHandler;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.DataPermissionInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import org.apache.ibatis.reflection.MetaObject;
@@ -30,6 +31,8 @@ public class MyBatisPlusConfig {
     @Bean
     public MybatisPlusInterceptor mybatisPlusInterceptor() {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+        // 数据权限拦截器（基于 data_scope + dept_id 自动过滤 sys_user 查询）
+        interceptor.addInnerInterceptor(new DataPermissionInterceptor(new DataScopeHandler()));
         // 添加乐观锁插件
         interceptor.addInnerInterceptor(new OptimisticLockerInnerInterceptor());
         return interceptor;
@@ -88,10 +91,11 @@ public class MyBatisPlusConfig {
      */
     @Bean
     public SqlSessionFactory sqlSessionFactory(DataSource dataSource,
-                                                SlowSqlInterceptor slowSqlInterceptor) throws Exception {
+                                                SlowSqlInterceptor slowSqlInterceptor,
+                                                MybatisPlusInterceptor mybatisPlusInterceptor) throws Exception {
         MybatisSqlSessionFactoryBean sessionFactory = new MybatisSqlSessionFactoryBean();
         sessionFactory.setDataSource(dataSource);
-        sessionFactory.setPlugins(slowSqlInterceptor);
+        sessionFactory.setPlugins(slowSqlInterceptor, mybatisPlusInterceptor);
         sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver()
                 .getResources("classpath*:/mapper/**/*.xml"));
         return sessionFactory.getObject();

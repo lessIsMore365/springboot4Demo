@@ -1,8 +1,10 @@
 package org.example.security.config;
 
+import org.example.security.filter.TokenRevocationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -14,6 +16,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.context.annotation.Primary;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
@@ -47,7 +50,8 @@ public class SecurityConfig {
      */
     @Bean
     @Order(2)
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                    StringRedisTemplate stringRedisTemplate) throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -64,6 +68,7 @@ public class SecurityConfig {
                                 "/api/monitor/server/health",
                                 "/api/logs/health",
                                 "/api/monitor/jvm/memory/chart",
+                                "/api/monitor/jvm/processes/chart",
                                 "/api/payment/stats/chart",
                                 "/swagger-ui.html",
                                 "/swagger-ui/**",
@@ -80,6 +85,8 @@ public class SecurityConfig {
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(Customizer.withDefaults())
                 )
+                .addFilterAfter(new TokenRevocationFilter(stringRedisTemplate),
+                        BearerTokenAuthenticationFilter.class)
                 .build();
     }
 }

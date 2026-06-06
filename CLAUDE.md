@@ -59,7 +59,7 @@ mvn clean package
 ### 通用说明
 - 基础路径: `http://localhost:8080`
 - 认证方式: Spring Authorization Server (OAuth2 password grant + JWT)
-- **公开端点**（无需认证）：`/api/auth/register`、`/api/auth/captcha`、`/api/auth/captcha/verify`、`/api/auth/health`、`/api/payment/notify/**`、`/api/payment/stats/chart`、`/api/ai/**`（除 `/api/ai/config/**` 需要认证）、`/api/mcp/**`、`/api/monitor/db/health`、`/api/monitor/server/health`、`/api/monitor/jvm/memory/chart`、`/api/logs/health`、`/.well-known/**`
+- **公开端点**（无需认证）：`/api/auth/register`、`/api/auth/captcha`、`/api/auth/captcha/verify`、`/api/auth/health`、`/api/payment/notify/**`、`/api/payment/stats/chart`、`/api/ai/**`（除 `/api/ai/config/**` 需要认证）、`/api/mcp/**`、`/api/monitor/db/health`、`/api/monitor/server/health`、`/api/monitor/jvm/memory/chart`、`/api/monitor/jvm/processes/chart`、`/api/logs/health`、`/.well-known/**`
 - **支付配置管理**：`/api/payment/config/**`（需要认证）
 - **获取 Token**：`POST /oauth2/token` 使用 Basic Auth（Client ID + Client Secret）+ `grant_type=password` + 验证码
 - **访问受保护端点**：携带 `Authorization: Bearer <access_token>`
@@ -1613,6 +1613,215 @@ GC 事件历史 — 实时捕获每次 GC 事件（通过 JMX NotificationListen
 | `*.totalFreedBytes` | 该类型 GC 累计释放字节数 |
 
 > **注意**: GC 事件通过 JMX NotificationListener 实时捕获，自应用启动后有效。`gcAction` 用于区分 Young/Full/Concurrent GC：minor/young/scavenge → Young，major/full/mixed → Full，其余 → Concurrent。暂停时间分布基于最近 1000 个样本。
+
+---
+
+### 12a. 服务器 JVM 进程监控（Arthas-like，需要认证，chart 页面公开）
+
+基于 JDK 命令行工具（`jps`、`jstat`、`jcmd`）通过 `ProcessBuilder` 执行并解析输出，发现并监控本服务器上所有 Java 进程的 JVM 信息。
+
+基础路径: `/api/monitor/jvm/processes`
+
+#### `GET /api/monitor/jvm/processes`（需要认证）
+列出服务器上所有 Java 进程（PID、主类、JVM 参数、JVM 版本、堆使用/峰值、运行时长）
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "pid": "1021",
+      "mainClass": "com.intellij.idea.Main",
+      "jvmArgs": "abort vfprintf -XX:ErrorFile=...",
+      "jvmVersion": "21.0.9+10",
+      "uptime": "6d 5h 20m",
+      "uptimeMs": "537460582",
+      "heapUsedBytes": "1951113113",
+      "heapMaxBytes": "2147483648"
+    },
+    {
+      "pid": "32443",
+      "mainClass": "org.example.DemoApplication",
+      "jvmArgs": "-XX:TieredStopAtLevel=1 --enable-preview",
+      "jvmVersion": "25.0.3+9",
+      "uptime": "1m 2s",
+      "uptimeMs": "62977",
+      "heapUsedBytes": "64454144",
+      "heapMaxBytes": "125829120"
+    }
+  ],
+  "timestamp": 1700000000000
+}
+```
+
+**字段说明:**
+| 字段 | 说明 |
+|------|------|
+| `pid` | 进程 ID |
+| `mainClass` | 主类全限定名 |
+| `jvmArgs` | JVM 启动参数 |
+| `jvmVersion` | JRE 版本号（从 `jcmd VM.info` 解析） |
+| `uptime` | 进程运行时长（可读格式: `1h 30m` / `6d 5h 20m`） |
+| `uptimeMs` | 进程运行时长 (ms) |
+| `heapUsedBytes` | 堆内存已使用 (bytes)，= Eden Used + Survivor Used + Old Gen Used |
+| `heapMaxBytes` | 堆内存总容量 (bytes)，= Eden Capacity + Survivor Capacity + Old Gen Capacity |
+
+> **注意:** 进程按运行时长降序排列。自动过滤 `jps`、`jcmd`、`jstat` 等 JDK 工具自身进程。
+
+---
+
+#### `GET /api/monitor/jvm/processes/{pid}`（需要认证）
+获取指定进程的详细 JVM 信息（含堆内存池、GC 统计、线程数、VM 标志、OS 信息等）
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "pid": "32443",
+    "mainClass": "org.example.DemoApplication",
+    "jvmArgs": "-XX:TieredStopAtLevel=1 --enable-preview",
+    "jvmVersion": "25.0.3+9",
+    "javaHome": "/Library/Java/JavaVirtualMachines/jdk-25.jdk/Contents/Home",
+    "uptime": "1m 2s",
+    "uptimeMs": 62977,
+    "osInfo": "\"Mac14,3\" arm64, 8 cores, 16G, Darwin 25.5.0, macOS 26.5 (25F71)",
+    "heapPools": [
+      {
+        "name": "Survivor",
+        "capacity": 8388608,
+        "used": 6986956,
+        "max": -1,
+        "usagePercent": 83.29
+      },
+      {
+        "name": "Eden",
+        "capacity": 52428800,
+        "used": 6291456,
+        "max": -1,
+        "usagePercent": 12.0
+      },
+      {
+        "name": "Old Gen",
+        "capacity": 65011712,
+        "used": 53272883,
+        "max": -1,
+        "usagePercent": 81.94
+      },
+      {
+        "name": "Metaspace",
+        "capacity": 86179840,
+        "used": 85468569,
+        "max": -1,
+        "usagePercent": 99.17
+      }
+    ],
+    "gcStats": {
+      "youngGcCount": 17,
+      "youngGcTimeMs": 50.0,
+      "fullGcCount": 0,
+      "fullGcTimeMs": 0.0
+    },
+    "threadCount": 45,
+    "vmFlags": [
+      "-XX:CICompilerCount=4",
+      "-XX:ConcGCThreads=2",
+      "-XX:MaxHeapSize=4294967296",
+      "-XX:+UseCompressedOops",
+      "-XX:+UseG1GC"
+    ]
+  },
+  "timestamp": 1700000000000
+}
+```
+
+**字段说明:**
+| 字段 | 说明 |
+|------|------|
+| `javaHome` | JAVA_HOME 路径（从 `jcmd VM.system_properties` 解析） |
+| `osInfo` | 操作系统信息（主机名、架构、核心数、内存、OS 版本，从 `jcmd VM.info` Host 行解析） |
+| `heapPools` | 各内存池详情（Survivor/Eden/Old Gen/Metaspace），从 `jstat -gc` 解析 |
+| `heapPools[].capacity` | 该内存池当前容量 (bytes) |
+| `heapPools[].used` | 该内存池已使用 (bytes) |
+| `heapPools[].max` | 该内存池最大值 (bytes)，`-1` 表示无上限或无法获取 |
+| `heapPools[].usagePercent` | 使用率 (%) |
+| `gcStats` | GC 统计（Young GC / Full GC 次数及累计耗时） |
+| `threadCount` | 当前线程数（从线程转储统计） |
+| `vmFlags` | JVM 标志列表（`-XX:` / `-Xm` / `-D` 开头，从 `jcmd VM.flags` 解析） |
+
+---
+
+#### `GET /api/monitor/jvm/processes/{pid}/gc`（需要认证）
+获取指定进程的 GC 统计和堆内存池详情（从 `jstat -gc` 解析）
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "pid": "32443",
+    "gcStats": {
+      "youngGcCount": 17,
+      "youngGcTimeMs": 50.0,
+      "fullGcCount": 0,
+      "fullGcTimeMs": 0.0
+    },
+    "heapPools": [
+      {"name": "Eden", "capacity": 52428800, "used": 6291456, "usagePercent": 12.0},
+      {"name": "Old Gen", "capacity": 65011712, "used": 53272883, "usagePercent": 81.94}
+    ]
+  },
+  "timestamp": 1700000000000
+}
+```
+
+---
+
+#### `GET /api/monitor/jvm/processes/{pid}/thread-dump`（需要认证）
+获取指定进程的线程转储（`jcmd <pid> Thread.print` 完整输出 + 线程数统计）
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "pid": "32443",
+    "threadCount": 45,
+    "rawDump": "\"main\" #1 prio=5 os_prio=31 cpu=...\n  java.lang.Thread.State: RUNNABLE\n    at ...\n"
+  },
+  "timestamp": 1700000000000
+}
+```
+
+---
+
+#### `GET /api/monitor/jvm/processes/chart`（公开，`?token=` 认证）
+ECharts 多进程仪表盘 HTML 页面，5 秒自动刷新
+
+**使用方式:**
+```
+GET /api/monitor/jvm/processes/chart?token=<access_token>
+```
+
+**页面功能:**
+- 进程列表表格（PID、主类、堆已用/堆最大/使用率、运行时长、JVM 版本），PID 可点击跳转详情 JSON
+- 堆内存对比柱状图（多进程堆已用 vs 堆最大）
+- GC 统计对比柱状图（Young GC / Full GC 次数，自动获取各进程 GC 详情）
+- 堆使用率饼图（多进程对比）
+- 进程运行时长柱状图
+- Token 认证（URL `?token=` → localStorage，后续 API 轮询自动携带）
+- Dark 主题（#1a1a2e 背景 + ECharts 5.6.0 CDN）
+
+**底层实现:**
+- 进程发现: `jps -lv`（过滤 JDK 工具进程）
+- JVM 信息: `jcmd <pid> VM.info`（版本、OS、运行时）
+- 堆/GC: `jstat -gc <pid>`（各内存池容量/使用量、GC 次数/耗时）
+- 运行时长: `jcmd <pid> VM.uptime`
+- VM 标志: `jcmd <pid> VM.flags`
+- 线程转储: `jcmd <pid> Thread.print`
+- Java Home: `jcmd <pid> VM.system_properties`
+- 命令执行: `ProcessBuilder` + `redirectErrorStream(true)` + `CompletableFuture` 异步读取（避免大输出管道缓冲区死锁），5 秒超时保护
 
 ---
 
@@ -3725,6 +3934,8 @@ The project is configured to connect to a local PostgreSQL database:
 11. **Security** - 支付回调使用 RSA2/SHA256withRSA 验签，微信支付使用 APIv3 签名认证。密钥通过环境变量注入，无硬编码。公开端点：`/api/auth/*`、`/api/payment/notify/**`、`/api/ai/**`（除 `/api/ai/config/**`）、`/api/monitor/db/health`、`/api/monitor/server/health`、`/.well-known/**`。
 
 12. **JVM Monitor** - JVM 监控端点（`/api/monitor/jvm/*`），基于 `java.lang.management` MXBeans 提供堆内存、虚拟线程/平台线程统计、GC 详情（含 Full GC 事件历史 + 暂停时间 p50/p95/p99 分布）、线程转储等实时数据，无需外部依赖。GC 监控含 10 条异常检测规则 + JMX NotificationListener 实时事件捕获。**新增**：`/memory/history` 时间序列堆内存采样（5s 间隔，30 分钟历史）、`/memory/chart` ECharts 实时曲线可视化页面。所有监控端点需要认证（chart 页面公开，通过 `?token=` 传参认证）。
+
+12a. **Server JVM Process Monitor** - 服务器 JVM 进程监控端点（`/api/monitor/jvm/processes/*`），基于 JDK 命令行工具（`jps`、`jstat`、`jcmd`）通过 `ProcessBuilder` 发现并监控本服务器上所有 Java 进程。使用 `CompletableFuture` 异步读取进程输出避免管道缓冲区死锁，5 秒超时保护。提供进程列表、详情（堆内存池/GC/线程/VM 标志/OS 信息）、线程转储和 ECharts 多进程仪表盘。进程列表需要认证，chart 页面公开（`?token=` 认证）。
 
 13. **Database Monitor** - 数据库监控端点（`/api/monitor/db/*`），基于 HikariCP `HikariPoolMXBean` + JMX 提供连接池实时统计（活跃/空闲/等待连接数），PostgreSQL `pg_stat_user_tables` 表统计分析（行数/大小/扫描/增删改），连接延迟检测，**慢 SQL 统计**（MyBatis 拦截器自动采集，按 SQL 模板聚合，含最近慢 SQL 明细）。health 端点公开，其余需要认证。
 

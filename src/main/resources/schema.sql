@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS sys_user (
     create_time TIMESTAMP,
     update_time TIMESTAMP,
     last_login_time TIMESTAMP,
+    dept_id BIGINT,
     deleted INTEGER DEFAULT 0,
     version INTEGER DEFAULT 1,
     remark TEXT
@@ -37,7 +38,8 @@ CREATE TABLE IF NOT EXISTS sys_role (
     deleted INTEGER DEFAULT 0,
     version INTEGER DEFAULT 1,
     enabled BOOLEAN DEFAULT TRUE,
-    sort_order INTEGER DEFAULT 0
+    sort_order INTEGER DEFAULT 0,
+    data_scope VARCHAR(2) DEFAULT '1'
 );
 
 -- 角色表索引
@@ -141,6 +143,29 @@ CREATE TABLE IF NOT EXISTS sys_role_menu (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sys_role_menu_unique ON sys_role_menu(role_id, menu_id) WHERE deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_sys_role_menu_role_id ON sys_role_menu(role_id);
 CREATE INDEX IF NOT EXISTS idx_sys_role_menu_menu_id ON sys_role_menu(menu_id);
+
+-- =============================================
+-- 部门管理表
+-- =============================================
+
+-- 创建部门表 sys_dept
+CREATE TABLE IF NOT EXISTS sys_dept (
+    id BIGINT PRIMARY KEY,
+    parent_id BIGINT DEFAULT 0,
+    name VARCHAR(100) NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    leader VARCHAR(50),
+    phone VARCHAR(20),
+    email VARCHAR(100),
+    status INTEGER DEFAULT 0,
+    create_time TIMESTAMP,
+    update_time TIMESTAMP,
+    deleted INTEGER DEFAULT 0,
+    version INTEGER DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_sys_dept_parent_id ON sys_dept(parent_id);
+CREATE INDEX IF NOT EXISTS idx_sys_dept_sort_order ON sys_dept(sort_order);
 
 -- =============================================
 -- 支付模块 (Payment Module) 表
@@ -446,3 +471,11 @@ CREATE TABLE IF NOT EXISTS payment_config (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_config_method ON payment_config(payment_method);
+
+-- =============================================
+-- 兼容已有数据库的 ALTER TABLE 语句
+-- 当表已存在时，CREATE TABLE IF NOT EXISTS 不会添加新列，以下语句补充新增列
+-- =============================================
+
+ALTER TABLE sys_user ADD COLUMN IF NOT EXISTS dept_id BIGINT;
+ALTER TABLE sys_role ADD COLUMN IF NOT EXISTS data_scope VARCHAR(2) DEFAULT '1';

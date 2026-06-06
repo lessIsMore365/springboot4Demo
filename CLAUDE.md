@@ -2845,6 +2845,93 @@ POST /api/menus
 
 ---
 
+### 12g3. 部门管理端点（需要认证）
+
+树形部门管理，支持 CRUD + 上级部门选择。基础路径: `/api/dept`
+
+| 方法 | 路径 | 说明 | 权限 |
+|------|------|------|------|
+| `GET` | `/api/dept/tree` | 获取完整部门树 | ADMIN |
+| `GET` | `/api/dept/tree/exclude/{deptId}` | 获取部门树（排除指定部门及子部门） | ADMIN |
+| `GET` | `/api/dept/list` | 获取所有部门平铺列表 | ADMIN |
+| `POST` | `/api/dept` | 新增部门 | ADMIN |
+| `PUT` | `/api/dept` | 更新部门 | ADMIN |
+| `DELETE` | `/api/dept/{id}` | 删除部门（有子部门则拒绝） | ADMIN |
+
+#### `GET /api/dept/tree`（需要 ADMIN）
+
+获取完整部门树结构。
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 10, "parentId": 0, "name": "总公司", "sortOrder": 1,
+      "leader": "张总", "phone": "13800000000", "email": "ceo@example.com",
+      "status": true,
+      "children": [
+        {
+          "id": 11, "parentId": 10, "name": "技术部", "sortOrder": 1,
+          "leader": "李经理", "phone": "13800000001", "email": "tech@example.com",
+          "status": true,
+          "children": [
+            {"id": 14, "parentId": 11, "name": "研发组", "children": []},
+            {"id": 15, "parentId": 11, "name": "测试组", "children": []}
+          ]
+        },
+        {"id": 12, "parentId": 10, "name": "市场部", "children": []},
+        {"id": 13, "parentId": 10, "name": "财务部", "children": []}
+      ]
+    }
+  ],
+  "timestamp": 1700000000000
+}
+```
+
+**新增/更新部门:**
+```json
+{
+  "parentId": 11,
+  "name": "前端组",
+  "sortOrder": 3,
+  "leader": "周组长",
+  "phone": "13800000006",
+  "email": "frontend@example.com",
+  "status": 0
+}
+```
+
+**部门字段说明:**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `parentId` | Long | 父部门ID，0为根节点 |
+| `name` | String | 部门名称 |
+| `sortOrder` | Integer | 排序号 |
+| `leader` | String | 负责人 |
+| `phone` | String | 联系电话 |
+| `email` | String | 邮箱 |
+| `status` | Integer | 0=启用, 1=停用 |
+
+**角色数据范围 (dataScope):**
+
+| 值 | 含义 |
+|-----|------|
+| `1` | 全部数据权限（管理员） |
+| `2` | 自定义数据权限 |
+| `3` | 本部门数据权限 |
+| `4` | 本部门及子部门数据权限 |
+| `5` | 仅本人数据权限 |
+
+> `data_scope` 字段在 `sys_role` 表中，配合 `dept_id`（`sys_user` 表）实现数据级权限控制。预置管理员 `data_scope='1'`（全部），普通用户 `data_scope='3'`（本部门）。
+
+**数据库表:**
+- `sys_dept` — 部门表（id, parent_id, name, sort_order, leader, phone, email, status）
+
+---
+
 ### 12h. SpringDoc 接口文档（公开）
 
 #### Swagger UI
@@ -4146,6 +4233,8 @@ The project is configured to connect to a local PostgreSQL database:
 
 17b. **Menu Management** — 基于 RBAC 的菜单权限管理。`sys_menu` 表存储菜单树结构（M=目录/C=菜单/F=按钮），`sys_role_menu` 存储角色菜单分配。`GET /api/menus/user` 根据当前用户的角色返回可见菜单树，前端直接渲染侧边栏。admin 全菜单，user 仅支付管理+监控管理。
 
+17c. **Department Management** — 树形部门管理（`sys_dept` 表），支持 CRUD + 上级部门选择。`sys_role` 新增 `data_scope` 字段（1=全部/2=自定义/3=本部门/4=本部门及子部门/5=仅本人），`sys_user` 新增 `dept_id` 字段实现数据级权限隔离。
+
 18. **SpringDoc** - 交互式 API 文档（Swagger UI），支持 Bearer JWT 认证，公开端点无需认证即可访问。
 
 19. **AI Module** — 参考 Pig AI 设计，集成多模型 AI 能力（DeepSeek/通义千问/Kimi/智谱GLM）。提供商参数支持 Web 端实时配置无需重启。功能包括：
@@ -4158,17 +4247,18 @@ The project is configured to connect to a local PostgreSQL database:
     - RAG 知识库（文档上传→Apache Tika 解析→切片→关键词检索→LLM 问答）
     - MCP 协议服务（JSON-RPC，暴露业务函数给外部 Agent）
 
-20. **Database Tables** - `schema.sql` 自动创建 22 张表（启动时 `mode: always`）:
+20. **Database Tables** - `schema.sql` 自动创建 23 张表（启动时 `mode: always`）:
     - `sys_user`, `sys_role`, `sys_permission`, `sys_user_role`, `sys_role_permission`
-    - `sys_menu`, `sys_role_menu`
+    - `sys_menu`, `sys_role_menu`, `sys_dept`
     - `sys_oper_log`, `sys_dict_type`, `sys_dict_data`
     - `payment_order`, `payment_notify_log`, `payment_config`, `reconciliation_record`, `reconciliation_detail`
     - `ai_api_usage`, `ai_chat_session`, `ai_chat_history`
     - `ai_knowledge_base`, `ai_knowledge_doc`, `ai_knowledge_chunk`
     
     初始数据（`data.sql`）:
-    - 默认用户: `admin` / `user`（密码均为 `password`，BCrypt 加密）
-    - 默认角色: `ROLE_ADMIN` / `ROLE_USER`
+    - 默认用户: `admin` / `user`（密码均为 `password`，BCrypt 加密），admin 所属总公司，user 所属研发组
+    - 默认角色: `ROLE_ADMIN` / `ROLE_USER`（管理员 data_scope=全部，普通用户 data_scope=本部门）
+    - 6 个部门（总公司 → 技术部/市场部/财务部，技术部 → 研发组/测试组）
     - 14 个权限（用户/角色/权限管理 + 分配权限）
     - 13 条菜单（系统管理/支付管理/监控管理三大目录，admin 全菜单，user 仅后两项）
     - 5 条示例支付订单，2 条示例对帐记录，3 条示例对帐明细

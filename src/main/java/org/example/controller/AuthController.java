@@ -143,6 +143,7 @@ public class AuthController {
         userResponse.setUpdateTime(user.getUpdateTime());
         userResponse.setLastLoginTime(user.getLastLoginTime());
         userResponse.setRemark(user.getRemark());
+        userResponse.setDeptId(user.getDeptId());
 
         return ResponseEntity.ok()
                 .body(Map.of(

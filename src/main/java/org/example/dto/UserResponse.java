@@ -35,4 +35,6 @@ public class UserResponse {
     private LocalDateTime lastLoginTime;
 
     private String remark;
+
+    private Long deptId;
 }

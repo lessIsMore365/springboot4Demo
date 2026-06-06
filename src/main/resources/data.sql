@@ -1,12 +1,25 @@
 -- =============================================
+-- 初始部门数据
+-- =============================================
+
+INSERT INTO sys_dept (id, parent_id, name, sort_order, leader, phone, email, status, create_time, update_time, version, deleted) VALUES
+(10, 0, '总公司', 1, '张总', '13800000000', 'ceo@example.com', 0, NOW(), NOW(), 1, 0),
+(11, 10, '技术部', 1, '李经理', '13800000001', 'tech@example.com', 0, NOW(), NOW(), 1, 0),
+(12, 10, '市场部', 2, '王经理', '13800000002', 'market@example.com', 0, NOW(), NOW(), 1, 0),
+(13, 10, '财务部', 3, '赵经理', '13800000003', 'finance@example.com', 0, NOW(), NOW(), 1, 0),
+(14, 11, '研发组', 1, '陈组长', '13800000004', 'dev@example.com', 0, NOW(), NOW(), 1, 0),
+(15, 11, '测试组', 2, '刘组长', '13800000005', 'qa@example.com', 0, NOW(), NOW(), 1, 0)
+ON CONFLICT (id) DO NOTHING;
+
+-- =============================================
 -- 初始角色和权限数据
 -- 注意：这些ID是示例值，实际使用中可能会使用雪花算法生成
 -- =============================================
 
 -- 插入初始角色
-INSERT INTO sys_role (id, name, code, description, enabled, sort_order, create_time, update_time, version, deleted) VALUES
-(1, '管理员', 'ROLE_ADMIN', '系统管理员，拥有所有权限', TRUE, 1, NOW(), NOW(), 1, 0),
-(2, '普通用户', 'ROLE_USER', '普通用户，拥有基本权限', TRUE, 2, NOW(), NOW(), 1, 0)
+INSERT INTO sys_role (id, name, code, description, enabled, sort_order, data_scope, create_time, update_time, version, deleted) VALUES
+(1, '管理员', 'ROLE_ADMIN', '系统管理员，拥有所有权限', TRUE, 1, '1', NOW(), NOW(), 1, 0),
+(2, '普通用户', 'ROLE_USER', '普通用户，拥有基本权限', TRUE, 2, '3', NOW(), NOW(), 1, 0)
 ON CONFLICT (id) DO NOTHING;
 
 -- 插入初始权限
@@ -68,14 +81,14 @@ ON CONFLICT (id) DO NOTHING;
 -- 这里使用一个示例加密密码（实际部署时请重新生成）
 -- 创建一个默认管理员用户（用户名：admin，密码：password）
 -- BCrypt 哈希值：password (强度 10)
-INSERT INTO sys_user (id, username, password, email, age, roles, enabled, account_non_locked, account_non_expired, credentials_non_expired, create_time, update_time, last_login_time, version, deleted, remark) VALUES
-(1000, 'admin', '$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'admin@example.com', 30, 'ROLE_ADMIN', TRUE, TRUE, TRUE, TRUE, NOW(), NOW(), NOW(), 1, 0, '系统管理员')
+INSERT INTO sys_user (id, username, password, email, age, roles, enabled, account_non_locked, account_non_expired, credentials_non_expired, create_time, update_time, last_login_time, dept_id, version, deleted, remark) VALUES
+(1000, 'admin', '$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'admin@example.com', 30, 'ROLE_ADMIN', TRUE, TRUE, TRUE, TRUE, NOW(), NOW(), NOW(), 10, 1, 0, '系统管理员')
 ON CONFLICT (id) DO NOTHING;
 
 -- 创建一个普通用户（用户名：user，密码：password）
 -- BCrypt 哈希值：password (强度 10)
-INSERT INTO sys_user (id, username, password, email, age, roles, enabled, account_non_locked, account_non_expired, credentials_non_expired, create_time, update_time, last_login_time, version, deleted, remark) VALUES
-(1001, 'user', '$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'user@example.com', 25, 'ROLE_USER', TRUE, TRUE, TRUE, TRUE, NOW(), NOW(), NOW(), 1, 0, '普通用户')
+INSERT INTO sys_user (id, username, password, email, age, roles, enabled, account_non_locked, account_non_expired, credentials_non_expired, create_time, update_time, last_login_time, dept_id, version, deleted, remark) VALUES
+(1001, 'user', '$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'user@example.com', 25, 'ROLE_USER', TRUE, TRUE, TRUE, TRUE, NOW(), NOW(), NOW(), 14, 1, 0, '普通用户')
 ON CONFLICT (id) DO NOTHING;
 
 -- 为用户分配角色

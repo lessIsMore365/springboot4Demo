@@ -73,4 +73,9 @@ public class Role {
      * 排序字段
      */
     private Integer sortOrder = 0;
+
+    /**
+     * 数据范围: 1=全部, 2=自定义, 3=本部门, 4=本部门及子部门, 5=仅本人
+     */
+    private String dataScope = "1";
 }

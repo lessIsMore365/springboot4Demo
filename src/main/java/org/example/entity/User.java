@@ -101,4 +101,11 @@ public class User {
      * 最后登录时间
      */
     private LocalDateTime lastLoginTime;
+
+    /**
+     * 所属部门ID
+     */
+    @TableField("dept_id")
+    @com.fasterxml.jackson.annotation.JsonSetter(nulls = com.fasterxml.jackson.annotation.Nulls.SKIP)
+    private Long deptId;
 }

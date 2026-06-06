@@ -190,7 +190,9 @@ ON CONFLICT (id) DO NOTHING;
 
 -- 角色菜单分配 (sys_role_menu 从 30001 开始)
 -- 管理员角色(role_id=1) → 所有 13 个菜单
-INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, version, deleted) VALUES
+INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, version, deleted)
+SELECT id, role_id, menu_id, create_time, update_time, version, deleted
+FROM (VALUES
 (30001, 1, 100, NOW(), NOW(), 1, 0),
 (30002, 1, 101, NOW(), NOW(), 1, 0),
 (30003, 1, 102, NOW(), NOW(), 1, 0),
@@ -205,10 +207,16 @@ INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, versi
 (30012, 1, 302, NOW(), NOW(), 1, 0),
 (30013, 1, 303, NOW(), NOW(), 1, 0),
 (30014, 1, 304, NOW(), NOW(), 1, 0)
-ON CONFLICT (id) DO NOTHING;
+) AS t(id, role_id, menu_id, create_time, update_time, version, deleted)
+WHERE NOT EXISTS (
+    SELECT 1 FROM sys_role_menu r
+    WHERE r.role_id = t.role_id AND r.menu_id = t.menu_id AND r.deleted = 0
+);
 
 -- 普通用户角色(role_id=2) → 支付管理 + 监控管理（不含系统管理）
-INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, version, deleted) VALUES
+INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, version, deleted)
+SELECT id, role_id, menu_id, create_time, update_time, version, deleted
+FROM (VALUES
 (30015, 2, 200, NOW(), NOW(), 1, 0),
 (30016, 2, 201, NOW(), NOW(), 1, 0),
 (30017, 2, 202, NOW(), NOW(), 1, 0),
@@ -218,4 +226,8 @@ INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, versi
 (30021, 2, 302, NOW(), NOW(), 1, 0),
 (30022, 2, 303, NOW(), NOW(), 1, 0),
 (30023, 2, 304, NOW(), NOW(), 1, 0)
-ON CONFLICT (id) DO NOTHING;
+) AS t(id, role_id, menu_id, create_time, update_time, version, deleted)
+WHERE NOT EXISTS (
+    SELECT 1 FROM sys_role_menu r
+    WHERE r.role_id = t.role_id AND r.menu_id = t.menu_id AND r.deleted = 0
+);

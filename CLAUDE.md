@@ -2822,6 +2822,16 @@ POST /api/menus
 | `C` | 菜单（二级页面菜单，对应前端路由） |
 | `F` | 按钮（页面内操作按钮，如新增/删除） |
 
+**visible / status 字段说明:**
+| 字段 | 值 | 含义 |
+|------|-----|------|
+| `visible` | `0` | 显示（侧边栏可见） |
+| `visible` | `1` | 隐藏（不在侧边栏展示） |
+| `status` | `0` | 启用（菜单可用） |
+| `status` | `1` | 停用（菜单不可用） |
+
+> 注意：请求体传整数 `0`/`1`，但响应中 MenuNode 会转为 boolean（`visible: true` = 显示, `status: true` = 启用）。创建时不传这两个字段，默认为 `0`（显示+启用）。
+
 **数据库表:**
 - `sys_menu` — 菜单表（id, parent_id, name, path, component, icon, sort_order, menu_type, permission, visible, status）
 - `sys_role_menu` — 角色菜单关联表（role_id, menu_id）

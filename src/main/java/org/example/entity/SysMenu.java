@@ -41,9 +41,11 @@ public class SysMenu {
     private String permission;
 
     /** 是否可见: 0=显示, 1=隐藏 */
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL)
     private Integer visible = 0;
 
     /** 状态: 0=启用, 1=停用 */
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL)
     private Integer status = 0;
 
     @TableField(fill = FieldFill.INSERT)
@@ -52,8 +54,9 @@ public class SysMenu {
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
 
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL)
     @TableLogic
-    private Integer deleted;
+    private Integer deleted = 0;
 
     @Version
     private Integer version;

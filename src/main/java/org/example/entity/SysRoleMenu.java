@@ -22,8 +22,9 @@ public class SysRoleMenu {
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
 
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL)
     @TableLogic
-    private Integer deleted;
+    private Integer deleted = 0;
 
     @Version
     private Integer version;

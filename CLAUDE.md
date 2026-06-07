@@ -344,6 +344,8 @@ curl -s -X POST http://localhost:8080/oauth2/token \
 | `GET` | `/api/users/concurrent-test` | 并发测试 `?concurrentCount=5` | 认证 |
 | `GET` | `/api/users/health` | 健康检查 | 公开 |
 
+> **创建用户自动赋予角色:** `POST /api/users` 传 `deptId` 时，系统自动从部门 `default_role_id` 补全角色（+ ROLE_USER）。若同时传了 `roles`，与部门默认角色取并集。详情参见 §12g5。
+
 **分页查询请求:** `GET /api/users?page=1&size=10`
 
 **分页查询响应:**
@@ -2914,6 +2916,7 @@ POST /api/menus
 | `phone` | String | 联系电话 |
 | `email` | String | 邮箱 |
 | `status` | Integer | 0=启用, 1=停用 |
+| `defaultRoleId` | Long | 部门默认角色ID — 新成员加入时自动赋予该角色 |
 
 **角色数据范围 (dataScope):**
 
@@ -2928,7 +2931,7 @@ POST /api/menus
 > `data_scope` 字段在 `sys_role` 表中，配合 `dept_id`（`sys_user` 表）实现数据级权限控制。预置管理员 `data_scope='1'`（全部），普通用户 `data_scope='3'`（本部门）。
 
 **数据库表:**
-- `sys_dept` — 部门表（id, parent_id, name, sort_order, leader, phone, email, status）
+- `sys_dept` — 部门表（id, parent_id, name, sort_order, leader, phone, email, status, default_role_id）
 
 ---
 
@@ -3023,8 +3026,25 @@ curl -s -X POST http://localhost:8080/oauth2/token \
 curl -s "http://localhost:8080/api/users" -H "Authorization: Bearer <token>" | jq '.data[] | {username, deptId}'
 ```
 
+**创建用户自动赋予部门默认角色:**
+
+`POST /api/users` 创建用户时，系统会根据 `deptId` 自动补齐角色：
+- 仅传 `deptId` → 自动赋予 `ROLE_USER + 部门默认角色`
+- 传 `deptId` + `roles` → 部门默认角色与传入角色取并集合并
+- 不传 `deptId` → 仅 `ROLE_USER`（保持原有行为）
+
+```json
+// 场景1: 只选部门
+{"username":"newdev", "password":"...", "deptId":14}
+→ roles: "ROLE_DEPT_TECH,ROLE_USER"
+
+// 场景2: 选部门 + 特殊角色
+{"username":"newlead", "password":"...", "deptId":15, "roles":"ROLE_PROJECT_LEAD"}
+→ roles: "ROLE_DEPT_TECH,ROLE_USER,ROLE_PROJECT_LEAD"
+```
+
 **核心优势:**
-- 新人入职 → 分配 2 个角色（基础 + 部门默认）= 完成
+- 新人入职 → 只需选择部门，角色自动补齐 = 完成
 - 调岗 → 更换部门默认角色即可
 - 临时权限 → 叠加特殊角色，用完移除
 - 无需为每个人单独配置权限列表
@@ -4334,11 +4354,11 @@ The project is configured to connect to a local PostgreSQL database:
 
 17b. **Menu Management** — 基于 RBAC 的菜单权限管理。`sys_menu` 表存储菜单树结构（M=目录/C=菜单/F=按钮），`sys_role_menu` 存储角色菜单分配。`GET /api/menus/user` 根据当前用户的角色返回可见菜单树，前端直接渲染侧边栏。admin 全菜单，user 仅支付管理+监控管理。
 
-17c. **Department Management** — 树形部门管理（`sys_dept` 表），支持 CRUD + 上级部门选择。`sys_role` 新增 `data_scope` 字段（1=全部/2=自定义/3=本部门/4=本部门及子部门/5=仅本人），`sys_user` 新增 `dept_id` 字段。
+17c. **Department Management** — 树形部门管理（`sys_dept` 表），支持 CRUD + 上级部门选择。`sys_dept` 新增 `default_role_id` 字段，新成员加入时自动赋予部门默认角色。`sys_role` 新增 `data_scope` 字段（1=全部/2=自定义/3=本部门/4=本部门及子部门/5=仅本人），`sys_user` 新增 `dept_id` 字段。
 
 17d. **Data Scope Enforcement** — MyBatis Plus `DataPermissionInterceptor` 根据用户角色 `data_scope` 在 SQL 层面自动过滤 `sys_user` 查询（scope 1=全部, 3=本部门, 4=本部门及子部门, 5=仅本人）。Spring HandlerInterceptor 请求前装载 ThreadLocal 上下文，请求后自动清理。
 
-17e. **Multi-Role Overlay** — 用户可拥有多个角色，权限/菜单/数据范围取并集（data_scope 取最小值=最宽松）。演示数据：zhangsan/lisi（技术部）、wangwu（市场部）、zhaoliu（测试组长，3 角色叠加）、maqi（财务部），密码均为 `password`。详见 CLAUDE.md §12g5。
+17e. **Multi-Role Overlay & Auto-Assign** — 用户可拥有多个角色，权限/菜单/数据范围取并集（data_scope 取最小值=最宽松）。创建用户时根据 `deptId` 自动赋予部门默认角色，与传入角色取并集。演示数据：zhangsan/lisi（技术部）、wangwu（市场部）、zhaoliu（测试组长，3 角色叠加）、maqi（财务部），密码均为 `password`。详见 CLAUDE.md §12g5。
 
 18. **SpringDoc** - 交互式 API 文档（Swagger UI），支持 Bearer JWT 认证，公开端点无需认证即可访问。
 

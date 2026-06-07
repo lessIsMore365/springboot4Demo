@@ -19,7 +19,13 @@ ON CONFLICT (id) DO NOTHING;
 -- 插入初始角色
 INSERT INTO sys_role (id, name, code, description, enabled, sort_order, data_scope, create_time, update_time, version, deleted) VALUES
 (1, '管理员', 'ROLE_ADMIN', '系统管理员，拥有所有权限', TRUE, 1, '1', NOW(), NOW(), 1, 0),
-(2, '普通用户', 'ROLE_USER', '普通用户，拥有基本权限', TRUE, 2, '3', NOW(), NOW(), 1, 0)
+(2, '普通用户', 'ROLE_USER', '普通用户，拥有基本权限', TRUE, 2, '3', NOW(), NOW(), 1, 0),
+-- 部门默认角色（多角色叠加演示）
+(3, '技术部默认角色', 'ROLE_DEPT_TECH', '技术部成员默认角色，可查看支付与监控', TRUE, 10, '3', NOW(), NOW(), 1, 0),
+(4, '市场部默认角色', 'ROLE_DEPT_MARKET', '市场部成员默认角色，可查看支付', TRUE, 11, '3', NOW(), NOW(), 1, 0),
+(5, '财务部默认角色', 'ROLE_DEPT_FINANCE', '财务部成员默认角色，可查看支付/对帐/监控', TRUE, 12, '3', NOW(), NOW(), 1, 0),
+-- 特殊额外角色（叠加在部门角色之上）
+(6, '项目组长', 'ROLE_PROJECT_LEAD', '项目组长额外权限：创建用户、分配角色', TRUE, 20, '3', NOW(), NOW(), 1, 0)
 ON CONFLICT (id) DO NOTHING;
 
 -- 插入初始权限
@@ -73,6 +79,32 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time, update
 (10016, 2, 301, NOW(), NOW(), 1, 0)
 ON CONFLICT (id) DO NOTHING;
 
+-- 部门默认角色权限分配
+-- ROLE_DEPT_TECH(3): 查看用户/角色/权限（与技术相关的管理查看）
+INSERT INTO sys_role_permission (id, role_id, permission_id, create_time, update_time, version, deleted) VALUES
+(10017, 3, 101, NOW(), NOW(), 1, 0),
+(10018, 3, 201, NOW(), NOW(), 1, 0),
+(10019, 3, 301, NOW(), NOW(), 1, 0)
+ON CONFLICT (id) DO NOTHING;
+
+-- ROLE_DEPT_MARKET(4): 仅查看用户列表（市场人员只需知道有哪些用户）
+INSERT INTO sys_role_permission (id, role_id, permission_id, create_time, update_time, version, deleted) VALUES
+(10020, 4, 101, NOW(), NOW(), 1, 0)
+ON CONFLICT (id) DO NOTHING;
+
+-- ROLE_DEPT_FINANCE(5): 查看用户/角色/权限（财务需要了解系统结构）
+INSERT INTO sys_role_permission (id, role_id, permission_id, create_time, update_time, version, deleted) VALUES
+(10021, 5, 101, NOW(), NOW(), 1, 0),
+(10022, 5, 201, NOW(), NOW(), 1, 0),
+(10023, 5, 301, NOW(), NOW(), 1, 0)
+ON CONFLICT (id) DO NOTHING;
+
+-- ROLE_PROJECT_LEAD(6): 特殊额外权限 — 创建用户 + 分配角色
+INSERT INTO sys_role_permission (id, role_id, permission_id, create_time, update_time, version, deleted) VALUES
+(10024, 6, 102, NOW(), NOW(), 1, 0),
+(10025, 6, 401, NOW(), NOW(), 1, 0)
+ON CONFLICT (id) DO NOTHING;
+
 -- 创建一个默认管理员用户（用户名：admin，密码：admin123）
 -- 注意：密码需要使用BCrypt加密，实际值应为加密后的密码
 -- 你可以使用以下代码生成BCrypt密码：
@@ -95,6 +127,55 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO sys_user_role (id, user_id, role_id, create_time, update_time, version, deleted) VALUES
 (20000, 1000, 1, NOW(), NOW(), 1, 0), -- 管理员用户拥有管理员角色
 (20001, 1001, 2, NOW(), NOW(), 1, 0)  -- 普通用户拥有普通用户角色
+ON CONFLICT (id) DO NOTHING;
+
+-- =============================================
+-- 多角色叠加演示用户（密码均为 password）
+-- =============================================
+
+-- 张三 — 技术部/研发组 (dept=14)，ROLE_USER + ROLE_DEPT_TECH
+INSERT INTO sys_user (id, username, password, email, age, roles, enabled, account_non_locked, account_non_expired, credentials_non_expired, create_time, update_time, last_login_time, dept_id, version, deleted, remark) VALUES
+(1002, 'zhangsan', '$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'zhangsan@example.com', 28, 'ROLE_USER,ROLE_DEPT_TECH', TRUE, TRUE, TRUE, TRUE, NOW(), NOW(), NOW(), 14, 1, 0, '技术部研发组 — 标准成员')
+ON CONFLICT (id) DO NOTHING;
+
+-- 李四 — 技术部/研发组 (dept=14)，ROLE_USER + ROLE_DEPT_TECH（同部门=同权限）
+INSERT INTO sys_user (id, username, password, email, age, roles, enabled, account_non_locked, account_non_expired, credentials_non_expired, create_time, update_time, last_login_time, dept_id, version, deleted, remark) VALUES
+(1003, 'lisi', '$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'lisi@example.com', 26, 'ROLE_USER,ROLE_DEPT_TECH', TRUE, TRUE, TRUE, TRUE, NOW(), NOW(), NOW(), 14, 1, 0, '技术部研发组 — 标准成员')
+ON CONFLICT (id) DO NOTHING;
+
+-- 王五 — 市场部 (dept=12)，ROLE_USER + ROLE_DEPT_MARKET（不同部门=不同的默认角色）
+INSERT INTO sys_user (id, username, password, email, age, roles, enabled, account_non_locked, account_non_expired, credentials_non_expired, create_time, update_time, last_login_time, dept_id, version, deleted, remark) VALUES
+(1004, 'wangwu', '$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'wangwu@example.com', 30, 'ROLE_USER,ROLE_DEPT_MARKET', TRUE, TRUE, TRUE, TRUE, NOW(), NOW(), NOW(), 12, 1, 0, '市场部 — 仅支付相关菜单')
+ON CONFLICT (id) DO NOTHING;
+
+-- 赵六 — 技术部/测试组 (dept=15)，ROLE_USER + ROLE_DEPT_TECH + ROLE_PROJECT_LEAD（叠加特殊权限）
+INSERT INTO sys_user (id, username, password, email, age, roles, enabled, account_non_locked, account_non_expired, credentials_non_expired, create_time, update_time, last_login_time, dept_id, version, deleted, remark) VALUES
+(1005, 'zhaoliu', '$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'zhaoliu@example.com', 32, 'ROLE_USER,ROLE_DEPT_TECH,ROLE_PROJECT_LEAD', TRUE, TRUE, TRUE, TRUE, NOW(), NOW(), NOW(), 15, 1, 0, '测试组组长 — 叠加项目组长权限')
+ON CONFLICT (id) DO NOTHING;
+
+-- 马七 — 财务部 (dept=13)，ROLE_USER + ROLE_DEPT_FINANCE
+INSERT INTO sys_user (id, username, password, email, age, roles, enabled, account_non_locked, account_non_expired, credentials_non_expired, create_time, update_time, last_login_time, dept_id, version, deleted, remark) VALUES
+(1006, 'maqi', '$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'maqi@example.com', 35, 'ROLE_USER,ROLE_DEPT_FINANCE', TRUE, TRUE, TRUE, TRUE, NOW(), NOW(), NOW(), 13, 1, 0, '财务部 — 支付/对帐/监控权限')
+ON CONFLICT (id) DO NOTHING;
+
+-- 演示用户角色分配
+INSERT INTO sys_user_role (id, user_id, role_id, create_time, update_time, version, deleted) VALUES
+-- 张三：普通用户 + 技术部默认
+(20002, 1002, 2, NOW(), NOW(), 1, 0),
+(20003, 1002, 3, NOW(), NOW(), 1, 0),
+-- 李四：普通用户 + 技术部默认
+(20004, 1003, 2, NOW(), NOW(), 1, 0),
+(20005, 1003, 3, NOW(), NOW(), 1, 0),
+-- 王五：普通用户 + 市场部默认
+(20006, 1004, 2, NOW(), NOW(), 1, 0),
+(20007, 1004, 4, NOW(), NOW(), 1, 0),
+-- 赵六：普通用户 + 技术部默认 + 项目组长（三角色叠加）
+(20008, 1005, 2, NOW(), NOW(), 1, 0),
+(20009, 1005, 3, NOW(), NOW(), 1, 0),
+(20010, 1005, 6, NOW(), NOW(), 1, 0),
+-- 马七：普通用户 + 财务部默认
+(20011, 1006, 2, NOW(), NOW(), 1, 0),
+(20012, 1006, 5, NOW(), NOW(), 1, 0)
 ON CONFLICT (id) DO NOTHING;
 
 -- =============================================
@@ -239,6 +320,70 @@ FROM (VALUES
 (30021, 2, 302, NOW(), NOW(), 1, 0),
 (30022, 2, 303, NOW(), NOW(), 1, 0),
 (30023, 2, 304, NOW(), NOW(), 1, 0)
+) AS t(id, role_id, menu_id, create_time, update_time, version, deleted)
+WHERE NOT EXISTS (
+    SELECT 1 FROM sys_role_menu r
+    WHERE r.role_id = t.role_id AND r.menu_id = t.menu_id AND r.deleted = 0
+);
+
+-- 部门默认角色菜单分配
+-- ROLE_DEPT_TECH(3): 支付管理 + 监控管理（与技术部相关的模块）
+INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, version, deleted)
+SELECT id, role_id, menu_id, create_time, update_time, version, deleted
+FROM (VALUES
+(30024, 3, 200, NOW(), NOW(), 1, 0),
+(30025, 3, 201, NOW(), NOW(), 1, 0),
+(30026, 3, 202, NOW(), NOW(), 1, 0),
+(30027, 3, 203, NOW(), NOW(), 1, 0),
+(30028, 3, 300, NOW(), NOW(), 1, 0),
+(30029, 3, 301, NOW(), NOW(), 1, 0),
+(30030, 3, 302, NOW(), NOW(), 1, 0),
+(30031, 3, 303, NOW(), NOW(), 1, 0),
+(30032, 3, 304, NOW(), NOW(), 1, 0)
+) AS t(id, role_id, menu_id, create_time, update_time, version, deleted)
+WHERE NOT EXISTS (
+    SELECT 1 FROM sys_role_menu r
+    WHERE r.role_id = t.role_id AND r.menu_id = t.menu_id AND r.deleted = 0
+);
+
+-- ROLE_DEPT_MARKET(4): 仅支付管理（市场部关注订单和统计，不需要对帐和监控）
+INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, version, deleted)
+SELECT id, role_id, menu_id, create_time, update_time, version, deleted
+FROM (VALUES
+(30033, 4, 200, NOW(), NOW(), 1, 0),
+(30034, 4, 201, NOW(), NOW(), 1, 0),
+(30035, 4, 203, NOW(), NOW(), 1, 0)
+) AS t(id, role_id, menu_id, create_time, update_time, version, deleted)
+WHERE NOT EXISTS (
+    SELECT 1 FROM sys_role_menu r
+    WHERE r.role_id = t.role_id AND r.menu_id = t.menu_id AND r.deleted = 0
+);
+
+-- ROLE_DEPT_FINANCE(5): 支付管理 + 监控管理（财务需要支付/对帐/监控全部）
+INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, version, deleted)
+SELECT id, role_id, menu_id, create_time, update_time, version, deleted
+FROM (VALUES
+(30036, 5, 200, NOW(), NOW(), 1, 0),
+(30037, 5, 201, NOW(), NOW(), 1, 0),
+(30038, 5, 202, NOW(), NOW(), 1, 0),
+(30039, 5, 203, NOW(), NOW(), 1, 0),
+(30040, 5, 300, NOW(), NOW(), 1, 0),
+(30041, 5, 301, NOW(), NOW(), 1, 0),
+(30042, 5, 302, NOW(), NOW(), 1, 0),
+(30043, 5, 303, NOW(), NOW(), 1, 0),
+(30044, 5, 304, NOW(), NOW(), 1, 0)
+) AS t(id, role_id, menu_id, create_time, update_time, version, deleted)
+WHERE NOT EXISTS (
+    SELECT 1 FROM sys_role_menu r
+    WHERE r.role_id = t.role_id AND r.menu_id = t.menu_id AND r.deleted = 0
+);
+
+-- ROLE_PROJECT_LEAD(6): 系统管理目录 + 用户管理菜单（仅管理用户，不碰角色/权限/菜单）
+INSERT INTO sys_role_menu (id, role_id, menu_id, create_time, update_time, version, deleted)
+SELECT id, role_id, menu_id, create_time, update_time, version, deleted
+FROM (VALUES
+(30045, 6, 100, NOW(), NOW(), 1, 0),
+(30046, 6, 101, NOW(), NOW(), 1, 0)
 ) AS t(id, role_id, menu_id, create_time, update_time, version, deleted)
 WHERE NOT EXISTS (
     SELECT 1 FROM sys_role_menu r

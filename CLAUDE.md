@@ -2984,6 +2984,55 @@ POST /api/menus
 
 ---
 
+### 12g5. 多角色叠加 — 部门默认权限模式
+
+基于 RBAC 多角色叠加（用户可拥有多个角色，权限+菜单+数据范围取并集），实现部门默认权限管理：
+
+- **部门默认角色**：每个部门创建一个默认角色，分配该部门通用权限和菜单
+- **新人加入**：只需分配 `ROLE_USER` + 部门默认角色（如 `ROLE_DEPT_TECH`）
+- **特殊权限**：创建独立角色（如 `ROLE_PROJECT_LEAD`），叠加给特定个人
+- **生效规则**：权限 = 所有角色权限的并集，数据范围 = 所有角色 data_scope 的最小值（最宽松）
+
+**演示角色:**
+
+| 角色 | code | data_scope | 权限 | 菜单 |
+|------|------|-----------|------|------|
+| 技术部默认 | `ROLE_DEPT_TECH` | 3 | user:read, role:read, permission:read | 支付管理 + 监控管理 |
+| 市场部默认 | `ROLE_DEPT_MARKET` | 3 | user:read | 支付管理（无对帐/监控） |
+| 财务部默认 | `ROLE_DEPT_FINANCE` | 3 | user:read, role:read, permission:read | 支付管理 + 监控管理 |
+| 项目组长 | `ROLE_PROJECT_LEAD` | 3 | user:create, user:assign-role | 系统管理（仅用户管理） |
+
+**演示用户:**
+
+| 用户名 | 部门 | 角色 | 效果 |
+|--------|------|------|------|
+| `zhangsan` | 技术部/研发组(14) | ROLE_USER + ROLE_DEPT_TECH | 标准技术部员工：可查看支付/监控 |
+| `lisi` | 技术部/研发组(14) | ROLE_USER + ROLE_DEPT_TECH | 同部门=同权限（只需分配相同角色） |
+| `wangwu` | 市场部(12) | ROLE_USER + ROLE_DEPT_MARKET | 市场部员工：仅支付相关菜单 |
+| `zhaoliu` | 技术部/测试组(15) | ROLE_USER + ROLE_DEPT_TECH + ROLE_PROJECT_LEAD | 测试组长：技术部默认 + 额外管理权限 |
+| `maqi` | 财务部(13) | ROLE_USER + ROLE_DEPT_FINANCE | 财务部员工：支付/对帐/监控 |
+
+**验证方式:**
+```bash
+# zhaoliu（3 角色叠加）→ 系统管理 + 支付管理 + 监控管理 全部菜单
+curl -s -X POST http://localhost:8080/oauth2/token \
+  -u "web-client:secret" -d "grant_type=password" \
+  -d "username=zhaoliu" -d "password=password" ... | jq
+
+# wangwu（市场部）→ data_scope=3, dept_id=12，仅看到市场部用户
+curl -s "http://localhost:8080/api/users" -H "Authorization: Bearer <token>" | jq '.data[] | {username, deptId}'
+```
+
+**核心优势:**
+- 新人入职 → 分配 2 个角色（基础 + 部门默认）= 完成
+- 调岗 → 更换部门默认角色即可
+- 临时权限 → 叠加特殊角色，用完移除
+- 无需为每个人单独配置权限列表
+
+> **密码:** 所有演示用户密码均为 `password`。
+
+---
+
 ### 12h. SpringDoc 接口文档（公开）
 
 #### Swagger UI
@@ -4288,6 +4337,8 @@ The project is configured to connect to a local PostgreSQL database:
 17c. **Department Management** — 树形部门管理（`sys_dept` 表），支持 CRUD + 上级部门选择。`sys_role` 新增 `data_scope` 字段（1=全部/2=自定义/3=本部门/4=本部门及子部门/5=仅本人），`sys_user` 新增 `dept_id` 字段。
 
 17d. **Data Scope Enforcement** — MyBatis Plus `DataPermissionInterceptor` 根据用户角色 `data_scope` 在 SQL 层面自动过滤 `sys_user` 查询（scope 1=全部, 3=本部门, 4=本部门及子部门, 5=仅本人）。Spring HandlerInterceptor 请求前装载 ThreadLocal 上下文，请求后自动清理。
+
+17e. **Multi-Role Overlay** — 用户可拥有多个角色，权限/菜单/数据范围取并集（data_scope 取最小值=最宽松）。演示数据：zhangsan/lisi（技术部）、wangwu（市场部）、zhaoliu（测试组长，3 角色叠加）、maqi（财务部），密码均为 `password`。详见 CLAUDE.md §12g5。
 
 18. **SpringDoc** - 交互式 API 文档（Swagger UI），支持 Bearer JWT 认证，公开端点无需认证即可访问。
 

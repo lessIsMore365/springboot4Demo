@@ -38,6 +38,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         Thread currentThread = Thread.currentThread();
         log.info("添加用户 - 当前线程: {}, 是否虚拟线程: {}", currentThread, currentThread.isVirtual());
 
+        if (user.getPassword() != null && !user.getPassword().isEmpty()) {
+            user.setPassword(passwordEncoder.encode(user.getPassword()));
+        }
         return this.save(user);
     }
 
@@ -50,6 +53,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         Thread currentThread = Thread.currentThread();
         log.info("异步添加用户 - 当前线程: {}, 是否虚拟线程: {}", currentThread, currentThread.isVirtual());
 
+        if (user.getPassword() != null && !user.getPassword().isEmpty()) {
+            user.setPassword(passwordEncoder.encode(user.getPassword()));
+        }
         boolean result = this.save(user);
         return CompletableFuture.completedFuture(result);
     }

@@ -2932,6 +2932,58 @@ POST /api/menus
 
 ---
 
+### 12g4. 数据权限拦截（自动生效，无需调用）
+
+基于角色 `data_scope` + 用户 `dept_id`，通过 MyBatis Plus `DataPermissionInterceptor` 在 SQL 层面自动追加 WHERE 条件，仅拦截 `sys_user` 表查询。
+
+**实现机制:**
+
+```
+请求 → DataScopeInterceptor(Spring HandlerInterceptor)
+     → 从 SecurityContext 获取当前用户
+     → 查询用户角色 → 取最小 data_scope 值（多角色取最宽松）
+     → 设入 DataScopeHelper(ThreadLocal)
+     → Controller → Service → Mapper
+     → DataScopeHandler(MyBatis Plus DataPermissionHandler)
+     → 检查 mappedStatementId 是否为 UserMapper
+     → 在 SQL WHERE 后追加 AND 条件
+     → 请求结束 → DataScopeHelper.clear()
+```
+
+**各 scope 生成的 SQL 条件:**
+
+| scope | 含义 | SQL 条件 |
+|-------|------|---------|
+| 1 | 全部数据 | 不追加任何条件 |
+| 2 | 自定义 | 同 scope 3（本部门） |
+| 3 | 本部门 | `AND dept_id = 14` |
+| 4 | 本部门及子部门 | `AND dept_id IN (14, 15, 18, ...)` |
+| 5 | 仅本人 | `AND id = 1001` |
+
+**边界处理:**
+
+| 场景 | 行为 |
+|------|------|
+| 未认证/匿名 | 不设上下文，不拦截 |
+| 多角色（admin+user） | scope = min(1, 3) = 1（全部） |
+| 用户无 dept_id | scope 3/4 降级为 scope 5（仅本人） |
+| 用户无角色 | 默认 scope 5 |
+| @Async 方法 | ThreadLocal 不跨线程传播，需手动设值 |
+| @TableLogic deleted=0 | 不受影响，AND 方式共存 |
+
+**核心文件:**
+
+| 文件 | 说明 |
+|------|------|
+| `common/DataScopeHelper.java` | ThreadLocal 上下文持有者 |
+| `config/DataScopeInterceptor.java` | Spring HandlerInterceptor，请求前装载上下文 |
+| `config/DataScopeHandler.java` | MyBatis Plus DataPermissionHandler，SQL 改写 |
+| `config/MyBatisPlusConfig.java` | 注册 DataPermissionInterceptor + 注入 SqlSessionFactory |
+
+> **注意:** 数据权限拦截器依赖 `mybatis-plus-jsqlparser` 模块（3.5.10.1），已在 pom.xml 中声明。
+
+---
+
 ### 12h. SpringDoc 接口文档（公开）
 
 #### Swagger UI
@@ -4233,7 +4285,9 @@ The project is configured to connect to a local PostgreSQL database:
 
 17b. **Menu Management** — 基于 RBAC 的菜单权限管理。`sys_menu` 表存储菜单树结构（M=目录/C=菜单/F=按钮），`sys_role_menu` 存储角色菜单分配。`GET /api/menus/user` 根据当前用户的角色返回可见菜单树，前端直接渲染侧边栏。admin 全菜单，user 仅支付管理+监控管理。
 
-17c. **Department Management** — 树形部门管理（`sys_dept` 表），支持 CRUD + 上级部门选择。`sys_role` 新增 `data_scope` 字段（1=全部/2=自定义/3=本部门/4=本部门及子部门/5=仅本人），`sys_user` 新增 `dept_id` 字段实现数据级权限隔离。
+17c. **Department Management** — 树形部门管理（`sys_dept` 表），支持 CRUD + 上级部门选择。`sys_role` 新增 `data_scope` 字段（1=全部/2=自定义/3=本部门/4=本部门及子部门/5=仅本人），`sys_user` 新增 `dept_id` 字段。
+
+17d. **Data Scope Enforcement** — MyBatis Plus `DataPermissionInterceptor` 根据用户角色 `data_scope` 在 SQL 层面自动过滤 `sys_user` 查询（scope 1=全部, 3=本部门, 4=本部门及子部门, 5=仅本人）。Spring HandlerInterceptor 请求前装载 ThreadLocal 上下文，请求后自动清理。
 
 18. **SpringDoc** - 交互式 API 文档（Swagger UI），支持 Bearer JWT 认证，公开端点无需认证即可访问。
 

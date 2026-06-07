@@ -11,6 +11,13 @@ INSERT INTO sys_dept (id, parent_id, name, sort_order, leader, phone, email, sta
 (15, 11, '测试组', 2, '刘组长', '13800000005', 'qa@example.com', 0, NOW(), NOW(), 1, 0)
 ON CONFLICT (id) DO NOTHING;
 
+-- 部门默认角色关联（新成员加入时自动赋予）
+UPDATE sys_dept SET default_role_id = 3 WHERE id = 11 AND default_role_id IS NULL;
+UPDATE sys_dept SET default_role_id = 4 WHERE id = 12 AND default_role_id IS NULL;
+UPDATE sys_dept SET default_role_id = 5 WHERE id = 13 AND default_role_id IS NULL;
+UPDATE sys_dept SET default_role_id = 3 WHERE id = 14 AND default_role_id IS NULL;
+UPDATE sys_dept SET default_role_id = 3 WHERE id = 15 AND default_role_id IS NULL;
+
 -- =============================================
 -- 初始角色和权限数据
 -- 注意：这些ID是示例值，实际使用中可能会使用雪花算法生成

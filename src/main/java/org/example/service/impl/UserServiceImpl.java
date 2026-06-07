@@ -3,9 +3,14 @@ package org.example.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.entity.Role;
+import org.example.entity.SysDept;
 import org.example.entity.User;
+import org.example.entity.UserRole;
+import org.example.mapper.RoleMapper;
+import org.example.mapper.SysDeptMapper;
+import org.example.mapper.UserRoleMapper;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.example.mapper.UserMapper;
 import org.example.service.UserService;
@@ -15,7 +20,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -24,13 +32,23 @@ import java.util.concurrent.CompletableFuture;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
 
     private final PasswordEncoder passwordEncoder;
+    private final SysDeptMapper deptMapper;
+    private final RoleMapper roleMapper;
+    private final UserRoleMapper userRoleMapper;
+
+    public UserServiceImpl(PasswordEncoder passwordEncoder, SysDeptMapper deptMapper,
+                           RoleMapper roleMapper, UserRoleMapper userRoleMapper) {
+        this.passwordEncoder = passwordEncoder;
+        this.deptMapper = deptMapper;
+        this.roleMapper = roleMapper;
+        this.userRoleMapper = userRoleMapper;
+    }
 
     /**
-     * 添加用户
+     * 添加用户 — 根据 deptId 自动赋予部门默认角色（可与传入的特殊角色合并）
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -41,14 +59,76 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (user.getPassword() != null && !user.getPassword().isEmpty()) {
             user.setPassword(passwordEncoder.encode(user.getPassword()));
         }
-        return this.save(user);
+
+        // 根据 deptId 自动补齐部门默认角色
+        resolveRoles(user);
+
+        boolean result = this.save(user);
+        if (result) {
+            syncUserRoles(user);
+        }
+        return result;
+    }
+
+    /**
+     * 根据 deptId 查询部门默认角色，合并到 user.roles 字段
+     */
+    private void resolveRoles(User user) {
+        Set<String> roleCodes = new HashSet<>();
+        // 收集传入的 roles
+        if (user.getRoles() != null && !user.getRoles().isBlank()) {
+            Arrays.stream(user.getRoles().split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .forEach(roleCodes::add);
+        }
+
+        // 保证基础角色
+        roleCodes.add("ROLE_USER");
+
+        // 部门默认角色
+        if (user.getDeptId() != null) {
+            SysDept dept = deptMapper.selectById(user.getDeptId());
+            if (dept != null && dept.getDefaultRoleId() != null) {
+                Role deptRole = roleMapper.selectById(dept.getDefaultRoleId());
+                if (deptRole != null) {
+                    roleCodes.add(deptRole.getCode());
+                    log.info("自动赋予部门默认角色: deptId={}, role={}", user.getDeptId(), deptRole.getCode());
+                }
+            }
+        }
+
+        user.setRoles(String.join(",", roleCodes));
+    }
+
+    /**
+     * 将 user.roles 字符串中的角色同步写入 sys_user_role 表
+     */
+    private void syncUserRoles(User user) {
+        if (user.getRoles() == null || user.getRoles().isBlank()) return;
+        String[] codes = user.getRoles().split(",");
+        for (String code : codes) {
+            String trimmed = code.trim();
+            if (trimmed.isEmpty()) continue;
+            Role role = roleMapper.selectOne(
+                    new LambdaQueryWrapper<Role>().eq(Role::getCode, trimmed));
+            if (role != null) {
+                UserRole ur = new UserRole();
+                ur.setUserId(user.getId());
+                ur.setRoleId(role.getId());
+                userRoleMapper.insert(ur);
+                log.debug("写入 sys_user_role: userId={}, roleId={}, code={}", user.getId(), role.getId(), trimmed);
+            }
+        }
     }
 
     /**
      * 异步添加用户 - 使用虚拟线程
+     * 注意：@Async 导致 ThreadLocal 不传播，syncUserRoles 中已使用 Mapper 直接查询实现
      */
     @Async("taskExecutor")
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public CompletableFuture<Boolean> addUserAsync(User user) {
         Thread currentThread = Thread.currentThread();
         log.info("异步添加用户 - 当前线程: {}, 是否虚拟线程: {}", currentThread, currentThread.isVirtual());
@@ -56,7 +136,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (user.getPassword() != null && !user.getPassword().isEmpty()) {
             user.setPassword(passwordEncoder.encode(user.getPassword()));
         }
+
+        resolveRoles(user);
+
         boolean result = this.save(user);
+        if (result) {
+            syncUserRoles(user);
+        }
         return CompletableFuture.completedFuture(result);
     }
 

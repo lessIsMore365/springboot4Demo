@@ -479,3 +479,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_config_method ON payment_config(pa
 
 ALTER TABLE sys_user ADD COLUMN IF NOT EXISTS dept_id BIGINT;
 ALTER TABLE sys_role ADD COLUMN IF NOT EXISTS data_scope VARCHAR(2) DEFAULT '1';
+ALTER TABLE sys_dept ADD COLUMN IF NOT EXISTS default_role_id BIGINT;

@@ -34,6 +34,10 @@ public class SysDept {
     /** 邮箱 */
     private String email;
 
+    /** 部门默认角色ID — 新成员加入时自动赋予 */
+    @JsonSerialize(using = ToStringSerializer.class)
+    private Long defaultRoleId;
+
     /** 状态: 0=启用, 1=停用 */
     @TableField(insertStrategy = FieldStrategy.NOT_NULL)
     private Integer status = 0;

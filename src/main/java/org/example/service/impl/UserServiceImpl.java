@@ -103,6 +103,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      * 将 user.roles 字符串中的角色同步写入 sys_user_role 表
      */
     private void syncUserRoles(User user) {
+        // 先删除已有角色关联，再重新写入（避免唯一约束冲突）
+        LambdaQueryWrapper<UserRole> deleteWrapper = new LambdaQueryWrapper<>();
+        deleteWrapper.eq(UserRole::getUserId, user.getId());
+        userRoleMapper.delete(deleteWrapper);
+
         if (user.getRoles() == null || user.getRoles().isBlank()) return;
         String[] codes = user.getRoles().split(",");
         for (String code : codes) {

@@ -336,6 +336,8 @@ curl -s -X POST http://localhost:8080/oauth2/token \
 | `GET` | `/api/users/async` | 异步分页查询（虚拟线程） | 认证 |
 | `POST` | `/api/users` | 创建用户 | ADMIN |
 | `POST` | `/api/users/async` | 异步创建用户（虚拟线程） | ADMIN |
+| `PUT` | `/api/users` | 更新用户（含部门变更自动重算角色） | ADMIN |
+| `DELETE` | `/api/users/{id}` | 删除用户（逻辑删除） | ADMIN |
 | `POST` | `/api/users/batch` | 批量创建测试用户 `?count=10` | ADMIN |
 | `POST` | `/api/users/batch/async` | 异步批量创建（虚拟线程） | ADMIN |
 | `GET` | `/api/users/stats` | 用户统计（总数） | 认证 |
@@ -352,7 +354,7 @@ curl -s -X POST http://localhost:8080/oauth2/token \
 ```json
 {
   "success": true,
-  "data": [{ "id": 1000, "username": "admin", ... }],
+  "data": [{ "id": 1000, "username": "admin", "deptId": 10, "deptName": "总公司", ... }],
   "pagination": {
     "page": 1,
     "size": 10,
@@ -362,6 +364,18 @@ curl -s -X POST http://localhost:8080/oauth2/token \
   "timestamp": 1700000000000
 }
 ```
+
+**更新用户请求:** `PUT /api/users`
+```json
+{
+  "id": 1001,
+  "deptId": 14,
+  "email": "newemail@example.com"
+}
+```
+> 更新 `deptId` 时自动重算部门默认角色；传 `password` 字段可修改密码。
+
+**删除用户请求:** `DELETE /api/users/1001`（逻辑删除，标记 deleted=1）
 
 ---
 
@@ -2857,7 +2871,8 @@ POST /api/menus
 | `GET` | `/api/dept/tree/exclude/{deptId}` | 获取部门树（排除指定部门及子部门） | ADMIN |
 | `GET` | `/api/dept/list` | 获取所有部门平铺列表 | ADMIN |
 | `POST` | `/api/dept` | 新增部门 | ADMIN |
-| `PUT` | `/api/dept` | 更新部门 | ADMIN |
+| `PUT` | `/api/dept` | 更新部门（ID 在请求体） | ADMIN |
+| `PUT` | `/api/dept/{id}` | 更新部门（ID 在路径） | ADMIN |
 | `DELETE` | `/api/dept/{id}` | 删除部门（有子部门则拒绝） | ADMIN |
 
 #### `GET /api/dept/tree`（需要 ADMIN）
@@ -2872,19 +2887,19 @@ POST /api/menus
     {
       "id": 10, "parentId": 0, "name": "总公司", "sortOrder": 1,
       "leader": "张总", "phone": "13800000000", "email": "ceo@example.com",
-      "status": true,
+      "defaultRoleId": null, "status": true,
       "children": [
         {
           "id": 11, "parentId": 10, "name": "技术部", "sortOrder": 1,
           "leader": "李经理", "phone": "13800000001", "email": "tech@example.com",
-          "status": true,
+          "defaultRoleId": 3, "status": true,
           "children": [
-            {"id": 14, "parentId": 11, "name": "研发组", "children": []},
-            {"id": 15, "parentId": 11, "name": "测试组", "children": []}
+            {"id": 14, "parentId": 11, "name": "研发组", "defaultRoleId": 3, "children": []},
+            {"id": 15, "parentId": 11, "name": "测试组", "defaultRoleId": 3, "children": []}
           ]
         },
-        {"id": 12, "parentId": 10, "name": "市场部", "children": []},
-        {"id": 13, "parentId": 10, "name": "财务部", "children": []}
+        {"id": 12, "parentId": 10, "name": "市场部", "defaultRoleId": 4, "children": []},
+        {"id": 13, "parentId": 10, "name": "财务部", "defaultRoleId": 5, "children": []}
       ]
     }
   ],
@@ -2901,6 +2916,7 @@ POST /api/menus
   "leader": "周组长",
   "phone": "13800000006",
   "email": "frontend@example.com",
+  "defaultRoleId": 3,
   "status": 0
 }
 ```

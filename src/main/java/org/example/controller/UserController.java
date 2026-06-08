@@ -203,6 +203,40 @@ public class UserController {
     }
 
     /**
+     * 更新用户（需要管理员权限）
+     */
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping
+    public Map<String, Object> updateUser(@RequestBody User user) {
+        log.info("更新用户请求: {}", user.getId());
+
+        boolean success = userService.updateUser(user);
+
+        return Map.of(
+                "success", success,
+                "message", success ? "用户更新成功" : "更新失败（用户不存在）",
+                "timestamp", System.currentTimeMillis()
+        );
+    }
+
+    /**
+     * 删除用户（需要管理员权限，逻辑删除）
+     */
+    @PreAuthorize("hasRole('ADMIN')")
+    @DeleteMapping("/{id}")
+    public Map<String, Object> deleteUser(@PathVariable Long id) {
+        log.info("删除用户请求: {}", id);
+
+        boolean success = userService.deleteUser(id);
+
+        return Map.of(
+                "success", success,
+                "message", success ? "用户已删除" : "删除失败（用户不存在）",
+                "timestamp", System.currentTimeMillis()
+        );
+    }
+
+    /**
      * 数据库性能测试
      */
     @GetMapping("/performance")

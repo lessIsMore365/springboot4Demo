@@ -1,11 +1,13 @@
 package org.example.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @TableName("sys_dept")
@@ -51,6 +53,11 @@ public class SysDept {
     @TableField(insertStrategy = FieldStrategy.NOT_NULL)
     @TableLogic
     private Integer deleted = 0;
+
+    /** 子部门列表 — 仅用于树形返回，不持久化 */
+    @TableField(exist = false)
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    private List<SysDept> children;
 
     @Version
     private Integer version;

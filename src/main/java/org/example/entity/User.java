@@ -108,4 +108,10 @@ public class User {
     @TableField("dept_id")
     @com.fasterxml.jackson.annotation.JsonSetter(nulls = com.fasterxml.jackson.annotation.Nulls.SKIP)
     private Long deptId;
+
+    /**
+     * 部门名称 — 仅用于列表展示，不持久化
+     */
+    @TableField(exist = false)
+    private String deptName;
 }

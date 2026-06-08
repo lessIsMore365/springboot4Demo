@@ -1,5 +1,6 @@
 package org.example.config;
 
+import com.baomidou.mybatisplus.core.config.GlobalConfig;
 import com.baomidou.mybatisplus.core.handlers.MetaObjectHandler;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.DataPermissionInterceptor;
@@ -92,12 +93,18 @@ public class MyBatisPlusConfig {
     @Bean
     public SqlSessionFactory sqlSessionFactory(DataSource dataSource,
                                                 SlowSqlInterceptor slowSqlInterceptor,
-                                                MybatisPlusInterceptor mybatisPlusInterceptor) throws Exception {
+                                                MybatisPlusInterceptor mybatisPlusInterceptor,
+                                                MetaObjectHandler metaObjectHandler) throws Exception {
         MybatisSqlSessionFactoryBean sessionFactory = new MybatisSqlSessionFactoryBean();
         sessionFactory.setDataSource(dataSource);
         sessionFactory.setPlugins(slowSqlInterceptor, mybatisPlusInterceptor);
         sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver()
                 .getResources("classpath*:/mapper/**/*.xml"));
+
+        GlobalConfig globalConfig = new GlobalConfig();
+        globalConfig.setMetaObjectHandler(metaObjectHandler);
+        sessionFactory.setGlobalConfig(globalConfig);
+
         return sessionFactory.getObject();
     }
 }

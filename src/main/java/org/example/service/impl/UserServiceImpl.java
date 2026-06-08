@@ -20,10 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -183,7 +181,28 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                 page, size, currentThread, currentThread.isVirtual());
 
         Page<User> pageParam = new Page<>(page, size);
-        return this.page(pageParam);
+        Page<User> result = this.page(pageParam);
+
+        // 批量填充部门名称
+        if (!result.getRecords().isEmpty()) {
+            List<Long> deptIds = result.getRecords().stream()
+                    .map(User::getDeptId)
+                    .filter(id -> id != null)
+                    .distinct()
+                    .toList();
+            if (!deptIds.isEmpty()) {
+                List<SysDept> depts = deptMapper.selectBatchIds(deptIds);
+                Map<Long, String> deptNameMap = depts.stream()
+                        .collect(Collectors.toMap(SysDept::getId, SysDept::getName));
+                result.getRecords().forEach(u -> {
+                    if (u.getDeptId() != null) {
+                        u.setDeptName(deptNameMap.get(u.getDeptId()));
+                    }
+                });
+            }
+        }
+
+        return result;
     }
 
     /**
@@ -312,5 +331,30 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         boolean matches = passwordEncoder.matches(password, user.getPassword());
         log.info("密码验证结果 - 用户名: {}, 结果: {}", username, matches);
         return matches;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean updateUser(User user) {
+        if (user.getPassword() != null && !user.getPassword().isEmpty()) {
+            user.setPassword(passwordEncoder.encode(user.getPassword()));
+        }
+
+        // 部门变更时重新解析角色
+        if (user.getDeptId() != null) {
+            User existing = this.getById(user.getId());
+            if (existing != null && !user.getDeptId().equals(existing.getDeptId())) {
+                resolveRoles(user);
+                syncUserRoles(user);
+            }
+        }
+
+        return this.updateById(user);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean deleteUser(Long id) {
+        return this.removeById(id);
     }
 }

@@ -76,6 +76,19 @@ public class DeptController {
         );
     }
 
+    /** 更新部门（RESTful 风格，ID 在路径中） */
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Map<String, Object> update(@PathVariable Long id, @RequestBody SysDept dept) {
+        dept.setId(id);
+        boolean ok = deptService.updateDept(dept);
+        return Map.of(
+                "success", ok,
+                "message", ok ? "更新成功" : "更新失败",
+                "timestamp", System.currentTimeMillis()
+        );
+    }
+
     /** 删除部门 */
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")

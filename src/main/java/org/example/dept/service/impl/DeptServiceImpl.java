@@ -83,6 +83,7 @@ public class DeptServiceImpl extends ServiceImpl<SysDeptMapper, SysDept> impleme
                 .map(d -> new DeptNode(
                         d.getId(), d.getParentId(), d.getName(), d.getSortOrder(),
                         d.getLeader(), d.getPhone(), d.getEmail(),
+                        d.getDefaultRoleId(),
                         d.getStatus() == 0,
                         buildChildren(d.getId(), map)))
                 .toList();

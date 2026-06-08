@@ -89,4 +89,18 @@ public interface UserService extends IService<User> {
      * @return 测试结果
      */
     String testDatabasePerformance();
+
+    /**
+     * 更新用户
+     * @param user 用户信息
+     * @return 是否成功
+     */
+    boolean updateUser(User user);
+
+    /**
+     * 删除用户（逻辑删除）
+     * @param id 用户ID
+     * @return 是否成功
+     */
+    boolean deleteUser(Long id);
 }

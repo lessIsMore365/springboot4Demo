@@ -8,7 +8,7 @@ public interface DeptService {
 
     /** 部门树节点 */
     record DeptNode(Long id, Long parentId, String name, Integer sortOrder,
-                    String leader, String phone, String email,
+                    String leader, String phone, String email, Long defaultRoleId,
                     boolean status, List<DeptNode> children) {}
 
     /** 获取完整部门树 */

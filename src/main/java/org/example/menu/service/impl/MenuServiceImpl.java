@@ -34,7 +34,6 @@ public class MenuServiceImpl extends ServiceImpl<SysMenuMapper, SysMenu> impleme
     public List<MenuNode> getMenuTree() {
         List<SysMenu> allMenus = menuMapper.selectList(
                 new LambdaQueryWrapper<SysMenu>()
-                        .eq(SysMenu::getStatus, 0)
                         .orderByAsc(SysMenu::getSortOrder));
         return buildTree(allMenus);
     }

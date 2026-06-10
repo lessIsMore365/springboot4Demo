@@ -203,3 +203,4 @@ public class AiProviderConfigService implements ApplicationRunner {
         return apiKey.substring(0, 4) + "****" + apiKey.substring(apiKey.length() - 4);
     }
 }
+

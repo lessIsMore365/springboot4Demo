@@ -10,14 +10,21 @@ import org.example.config.AlipayConfig;
 import org.example.config.WechatPayConfig;
 import org.example.entity.PaymentNotifyLog;
 import org.example.entity.PaymentOrder;
+import org.example.entity.RefundRecord;
 import org.example.mapper.PaymentNotifyLogMapper;
 import org.example.mapper.PaymentOrderMapper;
+import org.example.mapper.RefundRecordMapper;
+import org.example.payment.event.PaymentSuccessEvent;
+import org.example.payment.lock.DistributedLock;
+import org.example.payment.service.PaymentApiClient;
 import org.example.payment.service.PaymentConfigService;
+import org.example.payment.service.PaymentEventRecorder;
 import org.example.service.PaymentService;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -34,11 +41,16 @@ public class PaymentServiceImpl implements PaymentService {
 
     private final PaymentOrderMapper paymentOrderMapper;
     private final PaymentNotifyLogMapper notifyLogMapper;
+    private final RefundRecordMapper refundRecordMapper;
     private final PaymentConfigService paymentConfigService;
     private final AlipayConfig alipayConfig;
     private final WechatPayConfig wechatPayConfig;
     private final ObjectMapper objectMapper;
     private final HttpServletRequest request;
+    private final DistributedLock distributedLock;
+    private final PaymentEventRecorder eventRecorder;
+    private final PaymentApiClient paymentApiClient;
+    private final ApplicationEventPublisher eventPublisher;
 
     private static final DateTimeFormatter ORDER_NO_DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final Set<String> VALID_METHODS = Set.of("ALIPAY", "WECHAT");
@@ -494,18 +506,28 @@ public class PaymentServiceImpl implements PaymentService {
         }
 
         if ("TRADE_SUCCESS".equals(tradeStatus) || "TRADE_FINISHED".equals(tradeStatus)) {
-            if ("SUCCESS".equals(order.getStatus())) {
-                saveNotifyLog("ALIPAY", orderNo, notifyBody, true, "DUPLICATE", "订单已处理，重复通知", getClientIp());
-            } else {
-                order.setStatus("SUCCESS");
-                order.setTradeNo(tradeNo);
-                order.setBuyerId(buyerId);
-                order.setPaidTime(LocalDateTime.now());
-                order.setNotifyData(notifyBody);
-                paymentOrderMapper.updateById(order);
-                log.info("支付宝支付成功 - 订单号: {}, 交易号: {}", orderNo, tradeNo);
-                saveNotifyLog("ALIPAY", orderNo, notifyBody, true, "PROCESSED", null, getClientIp());
-            }
+            String finalNotifyBody = notifyBody;
+            String finalTradeNo = tradeNo;
+            String finalBuyerId = buyerId;
+            return distributedLock.executeWithLock(orderNo, 10, () -> {
+                if ("SUCCESS".equals(order.getStatus())) {
+                    saveNotifyLog("ALIPAY", orderNo, finalNotifyBody, true, "DUPLICATE", "订单已处理，重复通知", getClientIp());
+                } else {
+                    order.setStatus("SUCCESS");
+                    order.setTradeNo(finalTradeNo);
+                    order.setBuyerId(finalBuyerId);
+                    order.setPaidTime(LocalDateTime.now());
+                    order.setNotifyData(finalNotifyBody);
+                    paymentOrderMapper.updateById(order);
+                    log.info("支付宝支付成功 - 订单号: {}, 交易号: {}", orderNo, finalTradeNo);
+                    saveNotifyLog("ALIPAY", orderNo, finalNotifyBody, true, "PROCESSED", null, getClientIp());
+                    eventRecorder.recordTransition(orderNo, "PENDING", "SUCCESS",
+                            Map.of("tradeNo", finalTradeNo != null ? finalTradeNo : ""));
+                    eventPublisher.publishEvent(new PaymentSuccessEvent(this, orderNo,
+                            order.getPaymentMethod(), order.getAmount(), finalTradeNo, order.getPaidTime()));
+                }
+                return "success";
+            });
         } else {
             saveNotifyLog("ALIPAY", orderNo, notifyBody, true, "RECEIVED", "交易状态: " + tradeStatus, getClientIp());
         }
@@ -521,9 +543,13 @@ public class PaymentServiceImpl implements PaymentService {
 
         try {
             // 验签: 使用平台证书公钥验证签名
-            // String message = timestamp + "\n" + nonce + "\n" + body + "\n";
-            // boolean valid = verifyWechatSign(message, signature, serial);
-            // if (!valid) return Map.of("code", "FAIL", "message", "签名验证失败");
+            String message = timestamp + "\n" + nonce + "\n" + body + "\n";
+            boolean sigValid = wechatPayConfig.verifySignature(message, signature, serial);
+            if (!sigValid) {
+                log.error("微信通知签名验证失败 — 订单号: {}, serial={}", body, serial);
+                saveNotifyLog("WECHAT", null, body, false, "SIGN_INVALID", "签名验证失败", getClientIp());
+                return Map.of("code", "FAIL", "message", "签名验证失败");
+            }
 
             Map<String, Object> notifyData = objectMapper.readValue(body, Map.class);
             String eventType = (String) notifyData.get("event_type");
@@ -549,18 +575,35 @@ public class PaymentServiceImpl implements PaymentService {
                 }
 
                 if ("SUCCESS".equals(order.getStatus())) {
-                    saveNotifyLog("WECHAT", orderNo, body, null, "DUPLICATE", "订单已处理，重复通知", getClientIp());
+                    saveNotifyLog("WECHAT", orderNo, body, true, "DUPLICATE", "订单已处理，重复通知", getClientIp());
                 } else {
-                    order.setStatus("SUCCESS");
-                    order.setTradeNo(((Map<String, Object>) transaction.get("transaction_id")).toString());
-                    order.setPaidTime(LocalDateTime.now());
-                    order.setNotifyData(body);
-                    paymentOrderMapper.updateById(order);
-                    log.info("微信支付成功 - 订单号: {}", orderNo);
-                    saveNotifyLog("WECHAT", orderNo, body, null, "PROCESSED", null, getClientIp());
+                    String finalOrderNo = orderNo;
+                    Map<String, Object> lockResult = distributedLock.executeWithLock(orderNo, 10, () -> {
+                        PaymentOrder lockedOrder = queryOrder(finalOrderNo);
+                        if ("SUCCESS".equals(lockedOrder.getStatus())) {
+                            saveNotifyLog("WECHAT", finalOrderNo, body, true, "DUPLICATE", "订单已处理，重复通知", getClientIp());
+                            return Map.of("code", "SUCCESS", "message", "OK");
+                        }
+                        lockedOrder.setStatus("SUCCESS");
+                        lockedOrder.setTradeNo(((Map<String, Object>) transaction.get("transaction_id")).toString());
+                        lockedOrder.setPaidTime(LocalDateTime.now());
+                        lockedOrder.setNotifyData(body);
+                        paymentOrderMapper.updateById(lockedOrder);
+                        log.info("微信支付成功 - 订单号: {}", finalOrderNo);
+                        saveNotifyLog("WECHAT", finalOrderNo, body, true, "PROCESSED", null, getClientIp());
+                        eventRecorder.recordTransition(finalOrderNo, "PENDING", "SUCCESS",
+                                Map.of("tradeNo", lockedOrder.getTradeNo()));
+                        eventPublisher.publishEvent(new PaymentSuccessEvent(this, finalOrderNo,
+                                lockedOrder.getPaymentMethod(), lockedOrder.getAmount(),
+                                lockedOrder.getTradeNo(), lockedOrder.getPaidTime()));
+                        return Map.of("code", "SUCCESS", "message", "OK");
+                    });
+                    if (lockResult != null) return lockResult;
+                    // 获取锁失败，返回处理中状态让微信稍后重试
+                    return Map.of("code", "FAIL", "message", "订单处理中，请稍后重试");
                 }
             } else {
-                saveNotifyLog("WECHAT", null, body, null, "RECEIVED", "事件类型: " + eventType, getClientIp());
+                saveNotifyLog("WECHAT", null, body, true, "RECEIVED", "事件类型: " + eventType, getClientIp());
             }
 
             return Map.of("code", "SUCCESS", "message", "OK");
@@ -574,50 +617,31 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean closeOrder(String orderNo) {
-        PaymentOrder order = queryOrder(orderNo);
-        if (order == null || !"PENDING".equals(order.getStatus())) {
-            return false;
-        }
-
-        String validationError = paymentConfigService.validateConfig(order.getPaymentMethod());
-        if (validationError != null) {
-            log.warn("关单失败，支付配置不完整 - 订单号: {}, 原因: {}", orderNo, validationError);
-            throw new RuntimeException(validationError);
-        }
-
-        // 支付宝关单
-        if ("ALIPAY".equalsIgnoreCase(order.getPaymentMethod())) {
-            Map<String, String> bizContent = new LinkedHashMap<>();
-            bizContent.put("out_trade_no", orderNo);
-
-            Map<String, String> params = new LinkedHashMap<>();
-            params.put("app_id", alipayConfig.getAppId());
-            params.put("method", "alipay.trade.close");
-            params.put("charset", "UTF-8");
-            params.put("sign_type", alipayConfig.getSignType());
-            params.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-            params.put("version", "1.0");
-            try {
-                params.put("biz_content", objectMapper.writeValueAsString(bizContent));
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+        Boolean result = distributedLock.executeWithLock(orderNo, 10, () -> {
+            PaymentOrder order = queryOrder(orderNo);
+            if (order == null || !"PENDING".equals(order.getStatus())) {
+                return false;
             }
-            String signContent = alipayConfig.buildSignContent(params);
-            params.put("sign", alipayConfig.sign(signContent));
 
-            // 实际调用: RestClient.create().post().uri(alipayConfig.getGatewayUrl()).body(params)...
-            log.info("支付宝关单 - 订单号: {}", orderNo);
-        }
+            String validationError = paymentConfigService.validateConfig(order.getPaymentMethod());
+            if (validationError != null) {
+                log.warn("关单失败，支付配置不完整 - 订单号: {}, 原因: {}", orderNo, validationError);
+                throw new RuntimeException(validationError);
+            }
 
-        // 微信关单
-        if ("WECHAT".equalsIgnoreCase(order.getPaymentMethod())) {
-            // 实际调用: POST /v3/pay/transactions/out-trade-no/{orderNo}/close
-            log.info("微信关单 - 订单号: {}", orderNo);
-        }
+            if ("ALIPAY".equalsIgnoreCase(order.getPaymentMethod())) {
+                log.info("支付宝关单 - 订单号: {}", orderNo);
+            } else {
+                log.info("微信关单 - 订单号: {}", orderNo);
+            }
 
-        order.setStatus("CLOSED");
-        paymentOrderMapper.updateById(order);
-        return true;
+            order.setStatus("CLOSED");
+            paymentOrderMapper.updateById(order);
+            eventRecorder.recordTransition(orderNo, "PENDING", "CLOSED",
+                    Map.of("operator", getCurrentOperator()));
+            return true;
+        });
+        return result != null && result;
     }
 
     @Override
@@ -627,68 +651,94 @@ public class PaymentServiceImpl implements PaymentService {
         log.info("申请退款 - 订单号: {}, 金额: {}, 线程: {}, 虚拟线程: {}",
                 orderNo, refundAmount, currentThread, currentThread.isVirtual());
 
-        PaymentOrder order = queryOrder(orderNo);
-        if (order == null || !"SUCCESS".equals(order.getStatus())) {
-            throw new RuntimeException("订单不存在或未支付");
-        }
-
-        String validationError = paymentConfigService.validateConfig(order.getPaymentMethod());
-        if (validationError != null) {
-            throw new RuntimeException(validationError);
-        }
-
-        if (refundAmount == null || refundAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new RuntimeException("退款金额必须大于0");
-        }
-
-        BigDecimal maxRefund = order.getAmount().subtract(
-                order.getRefundAmount() != null ? order.getRefundAmount() : BigDecimal.ZERO);
-        if (refundAmount.compareTo(maxRefund) > 0) {
-            throw new RuntimeException("退款金额超过可退金额");
-        }
-
-        String refundTradeNo = generateTradeNo();
-
-        if ("ALIPAY".equalsIgnoreCase(order.getPaymentMethod())) {
-            // 支付宝退款: alipay.trade.refund
-            Map<String, String> bizContent = new LinkedHashMap<>();
-            bizContent.put("out_trade_no", orderNo);
-            bizContent.put("trade_no", order.getTradeNo());
-            bizContent.put("refund_amount", refundAmount.toString());
-            bizContent.put("refund_reason", reason);
-            bizContent.put("out_request_no", refundTradeNo);
-
-            Map<String, String> params = new LinkedHashMap<>();
-            params.put("app_id", alipayConfig.getAppId());
-            params.put("method", "alipay.trade.refund");
-            params.put("charset", "UTF-8");
-            params.put("sign_type", alipayConfig.getSignType());
-            params.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-            params.put("version", "1.0");
-            try {
-                params.put("biz_content", objectMapper.writeValueAsString(bizContent));
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+        // 分布式锁保护，防止并发退款
+        Map<String, Object> result = distributedLock.executeWithLock(orderNo, 10, () -> {
+            PaymentOrder order = queryOrder(orderNo);
+            if (order == null || !"SUCCESS".equals(order.getStatus())) {
+                throw new RuntimeException("订单不存在或未支付");
             }
-            String signContent = alipayConfig.buildSignContent(params);
-            params.put("sign", alipayConfig.sign(signContent));
 
-            // 实际调用: POST alipayConfig.getGatewayUrl() with params
-            log.info("支付宝退款 - 订单号: {}, 退款单号: {}, 金额: {}", orderNo, refundTradeNo, refundAmount);
-        } else {
-            // 微信支付退款: POST /v3/refund/domestic/refunds
-            log.info("微信退款 - 订单号: {}, 退款单号: {}, 金额: {}", orderNo, refundTradeNo, refundAmount);
+            String validationError = paymentConfigService.validateConfig(order.getPaymentMethod());
+            if (validationError != null) {
+                throw new RuntimeException(validationError);
+            }
+
+            if (refundAmount == null || refundAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new RuntimeException("退款金额必须大于0");
+            }
+
+            BigDecimal maxRefund = order.getAmount().subtract(
+                    order.getRefundAmount() != null ? order.getRefundAmount() : BigDecimal.ZERO);
+            if (refundAmount.compareTo(maxRefund) > 0) {
+                throw new RuntimeException("退款金额超过可退金额");
+            }
+
+            String refundTradeNo = generateTradeNo();
+            String fromStatus = order.getStatus();
+
+            // 创建退款记录
+            RefundRecord refundRecord = new RefundRecord();
+            refundRecord.setOrderNo(orderNo);
+            refundRecord.setRefundTradeNo(refundTradeNo);
+            refundRecord.setRefundAmount(refundAmount);
+            refundRecord.setReason(reason);
+            refundRecord.setStatus("PROCESSING");
+            refundRecord.setOperator(getCurrentOperator());
+            refundRecord.setOperatorIp(getClientIp());
+            refundRecordMapper.insert(refundRecord);
+
+            try {
+                if ("ALIPAY".equalsIgnoreCase(order.getPaymentMethod())) {
+                    Map<String, String> bizContent = new LinkedHashMap<>();
+                    bizContent.put("out_trade_no", orderNo);
+                    bizContent.put("trade_no", order.getTradeNo());
+                    bizContent.put("refund_amount", refundAmount.toString());
+                    bizContent.put("refund_reason", reason);
+                    bizContent.put("out_request_no", refundTradeNo);
+
+                    Map<String, String> params = new LinkedHashMap<>();
+                    params.put("app_id", alipayConfig.getAppId());
+                    params.put("method", "alipay.trade.refund");
+                    params.put("charset", "UTF-8");
+                    params.put("sign_type", alipayConfig.getSignType());
+                    params.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+                    params.put("version", "1.0");
+                    params.put("biz_content", objectMapper.writeValueAsString(bizContent));
+                    String signContent = alipayConfig.buildSignContent(params);
+                    params.put("sign", alipayConfig.sign(signContent));
+                    log.info("支付宝退款 - 订单号: {}, 退款单号: {}, 金额: {}", orderNo, refundTradeNo, refundAmount);
+                } else {
+                    log.info("微信退款 - 订单号: {}, 退款单号: {}, 金额: {}", orderNo, refundTradeNo, refundAmount);
+                }
+
+                // 更新退款记录状态
+                refundRecord.setStatus("SUCCESS");
+                refundRecordMapper.updateById(refundRecord);
+
+                // 更新订单
+                BigDecimal newRefund = (order.getRefundAmount() != null ? order.getRefundAmount() : BigDecimal.ZERO)
+                        .add(refundAmount);
+                order.setRefundAmount(newRefund);
+                String toStatus = newRefund.compareTo(order.getAmount()) >= 0 ? "REFUND" : "PARTIAL_REFUND";
+                order.setStatus(toStatus);
+                paymentOrderMapper.updateById(order);
+
+                eventRecorder.recordTransition(orderNo, fromStatus, toStatus,
+                        Map.of("refundTradeNo", refundTradeNo, "amount", refundAmount.toString(), "reason", reason));
+
+                return Map.of("success", true, "refundTradeNo", refundTradeNo, "amount", refundAmount);
+            } catch (Exception e) {
+                refundRecord.setStatus("FAILED");
+                refundRecord.setErrorMsg(e.getMessage());
+                refundRecordMapper.updateById(refundRecord);
+                throw new RuntimeException("退款失败: " + e.getMessage(), e);
+            }
+        });
+
+        if (result == null) {
+            throw new RuntimeException("订单处理中，请稍后重试");
         }
-
-        BigDecimal newRefund = (order.getRefundAmount() != null ? order.getRefundAmount() : BigDecimal.ZERO)
-                .add(refundAmount);
-        order.setRefundAmount(newRefund);
-        if (newRefund.compareTo(order.getAmount()) >= 0) {
-            order.setStatus("REFUND");
-        }
-        paymentOrderMapper.updateById(order);
-
-        return Map.of("success", true, "refundTradeNo", refundTradeNo, "amount", refundAmount);
+        return result;
     }
 
     @Override
@@ -715,39 +765,48 @@ public class PaymentServiceImpl implements PaymentService {
 
         int closedCount = 0;
         for (PaymentOrder order : expiredOrders) {
-            try {
-                // 调用平台关单接口
-                if ("ALIPAY".equalsIgnoreCase(order.getPaymentMethod())) {
-                    Map<String, String> bizContent = new LinkedHashMap<>();
-                    bizContent.put("out_trade_no", order.getOrderNo());
+            // 每笔订单加锁关闭
+            Boolean locked = distributedLock.executeWithLock(order.getOrderNo(), 5, () -> {
+                PaymentOrder latest = queryOrder(order.getOrderNo());
+                if (latest == null || !"PENDING".equals(latest.getStatus())) return false;
 
-                    Map<String, String> params = new LinkedHashMap<>();
-                    params.put("app_id", alipayConfig.getAppId());
-                    params.put("method", "alipay.trade.close");
-                    params.put("charset", "UTF-8");
-                    params.put("sign_type", alipayConfig.getSignType());
-                    params.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-                    params.put("version", "1.0");
-                    params.put("biz_content", objectMapper.writeValueAsString(bizContent));
-                    String signContent = alipayConfig.buildSignContent(params);
-                    params.put("sign", alipayConfig.sign(signContent));
-                    log.debug("支付宝关单 - 订单号: {}", order.getOrderNo());
-                } else if ("WECHAT".equalsIgnoreCase(order.getPaymentMethod())) {
-                    log.debug("微信关单 - 订单号: {}", order.getOrderNo());
-                }
-
-                order.setStatus("CLOSED");
-                paymentOrderMapper.updateById(order);
+                latest.setStatus("CLOSED");
+                paymentOrderMapper.updateById(latest);
+                eventRecorder.recordTransition(order.getOrderNo(), "PENDING", "CLOSED",
+                        Map.of("operator", "SCHEDULED_TASK", "reason", "超时未支付"));
+                return true;
+            });
+            if (Boolean.TRUE.equals(locked)) {
                 closedCount++;
-                log.info("超时订单已自动关闭 - 订单号: {}, 创建时间: {}, 金额: {}",
-                        order.getOrderNo(), order.getCreateTime(), order.getAmount());
-            } catch (Exception e) {
-                log.error("关闭超时订单失败 - 订单号: {}", order.getOrderNo(), e);
+                log.info("超时订单已自动关闭 - 订单号: {}, 金额: {}", order.getOrderNo(), order.getAmount());
             }
         }
 
         log.info("批量关闭超时订单完成 - 共 {} 笔，成功 {} 笔", expiredOrders.size(), closedCount);
         return closedCount;
+    }
+
+    /**
+     * 每 2 分钟扫描即将过期的订单并记录告警日志
+     */
+    @Scheduled(cron = "0 */2 * * * ?")
+    public void warnExpiringOrders() {
+        int expireMinutes = paymentConfigService.getOrderExpireMinutes("ALIPAY");
+        LocalDateTime warningThreshold = LocalDateTime.now().minusMinutes(expireMinutes - 2);
+
+        LambdaQueryWrapper<PaymentOrder> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(PaymentOrder::getStatus, "PENDING")
+                .lt(PaymentOrder::getCreateTime, warningThreshold)
+                .apply("create_time >= {0}", LocalDateTime.now().minusMinutes(expireMinutes));
+
+        List<PaymentOrder> expiring = paymentOrderMapper.selectList(wrapper);
+        if (!expiring.isEmpty()) {
+            log.warn("{} 笔订单即将过期（{}分钟），将在2分钟内自动关闭", expiring.size(), expireMinutes);
+            for (PaymentOrder order : expiring) {
+                log.warn("即将过期订单 — 订单号: {}, 金额: {}, 创建时间: {}",
+                        order.getOrderNo(), order.getAmount(), order.getCreateTime());
+            }
+        }
     }
 
     @Override
@@ -822,6 +881,15 @@ public class PaymentServiceImpl implements PaymentService {
             ip = request.getRemoteAddr();
         }
         return ip;
+    }
+
+    private String getCurrentOperator() {
+        try {
+            var auth = org.springframework.security.core.context.SecurityContextHolder
+                    .getContext().getAuthentication();
+            if (auth != null && auth.isAuthenticated()) return auth.getName();
+        } catch (Exception ignored) {}
+        return "SYSTEM";
     }
 
     @Override

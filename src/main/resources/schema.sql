@@ -480,3 +480,68 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_config_method ON payment_config(pa
 ALTER TABLE sys_user ADD COLUMN IF NOT EXISTS dept_id BIGINT;
 ALTER TABLE sys_role ADD COLUMN IF NOT EXISTS data_scope VARCHAR(2) DEFAULT '1';
 ALTER TABLE sys_dept ADD COLUMN IF NOT EXISTS default_role_id BIGINT;
+
+-- =============================================
+-- Phase 1-4 支付模块新增列
+-- =============================================
+ALTER TABLE payment_config ADD COLUMN IF NOT EXISTS wechat_platform_cert TEXT;
+ALTER TABLE payment_config ADD COLUMN IF NOT EXISTS wechat_platform_cert_serial VARCHAR(100);
+ALTER TABLE payment_order ADD COLUMN IF NOT EXISTS currency VARCHAR(3) DEFAULT 'CNY';
+
+-- =============================================
+-- Phase 3.1: 支付事件日志表 payment_event_log
+-- =============================================
+CREATE TABLE IF NOT EXISTS payment_event_log (
+    id BIGINT PRIMARY KEY,
+    order_no VARCHAR(64) NOT NULL,
+    event_type VARCHAR(30) NOT NULL,
+    from_status VARCHAR(20),
+    to_status VARCHAR(20),
+    operator VARCHAR(100) DEFAULT 'SYSTEM',
+    operator_ip VARCHAR(50),
+    event_data TEXT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_log_order_no ON payment_event_log(order_no);
+CREATE INDEX IF NOT EXISTS idx_event_log_event_type ON payment_event_log(event_type);
+CREATE INDEX IF NOT EXISTS idx_event_log_create_time ON payment_event_log(create_time);
+
+-- =============================================
+-- Phase 4.1: 退款记录表 refund_record
+-- =============================================
+CREATE TABLE IF NOT EXISTS refund_record (
+    id BIGINT PRIMARY KEY,
+    order_no VARCHAR(64) NOT NULL,
+    refund_trade_no VARCHAR(64) NOT NULL,
+    refund_amount DECIMAL(10, 2) NOT NULL,
+    reason VARCHAR(500),
+    status VARCHAR(20) NOT NULL DEFAULT 'PROCESSING',
+    remote_refund_no VARCHAR(64),
+    operator VARCHAR(100),
+    operator_ip VARCHAR(50),
+    error_msg VARCHAR(500),
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_refund_record_order_no ON refund_record(order_no);
+CREATE INDEX IF NOT EXISTS idx_refund_record_status ON refund_record(status);
+CREATE INDEX IF NOT EXISTS idx_refund_record_create_time ON refund_record(create_time);
+
+-- =============================================
+-- Phase 4.3: 支付 Webhook 注册表 payment_webhook
+-- =============================================
+CREATE TABLE IF NOT EXISTS payment_webhook (
+    id BIGINT PRIMARY KEY,
+    webhook_url VARCHAR(500) NOT NULL,
+    event_types VARCHAR(500),
+    secret VARCHAR(200),
+    enabled BOOLEAN DEFAULT TRUE,
+    max_retries INTEGER DEFAULT 3,
+    retry_count INTEGER DEFAULT 0,
+    last_status VARCHAR(20),
+    last_called_at TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP
+);

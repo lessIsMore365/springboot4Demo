@@ -110,6 +110,8 @@ public class PaymentConfigService implements ApplicationRunner {
         if (dto.getApiV3Key() != null) existing.setApiV3Key(dto.getApiV3Key());
         if (dto.getMchSerialNo() != null) existing.setMchSerialNo(dto.getMchSerialNo());
         if (dto.getPrivateKeyPath() != null) existing.setPrivateKeyPath(dto.getPrivateKeyPath());
+        if (dto.getWechatPlatformCert() != null) existing.setWechatPlatformCert(dto.getWechatPlatformCert());
+        if (dto.getWechatPlatformCertSerial() != null) existing.setWechatPlatformCertSerial(dto.getWechatPlatformCertSerial());
         if (dto.getEnabled() != null) existing.setEnabled(dto.getEnabled());
         if (dto.getOrderExpireMinutes() != null) existing.setOrderExpireMinutes(dto.getOrderExpireMinutes());
 

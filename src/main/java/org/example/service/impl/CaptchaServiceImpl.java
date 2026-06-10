@@ -1,10 +1,10 @@
 package org.example.service.impl;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.example.redis.core.RedisKeyNamespace;
+import org.example.redis.service.RedisCache;
 import org.example.service.CaptchaService;
-import org.example.service.RedisService;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
@@ -13,9 +13,9 @@ import java.awt.geom.AffineTransform;
 import java.awt.geom.CubicCurve2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.time.Duration;
 import java.util.*;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 点击汉字顺序验证码服务实现
@@ -25,11 +25,10 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class CaptchaServiceImpl implements CaptchaService {
 
-    private final RedisService redisService;
+    private final RedisCache redisCache;
     private final ObjectMapper objectMapper;
 
-    private static final String CAPTCHA_KEY_PREFIX = "captcha:";
-    private static final long CAPTCHA_EXPIRE_SECONDS = 300;
+    private static final Duration CAPTCHA_TTL = Duration.ofSeconds(300);
     private static final int IMAGE_WIDTH = 350;
     private static final int IMAGE_HEIGHT = 180;
     private static final int TOP_AREA_HEIGHT = 40;
@@ -51,8 +50,8 @@ public class CaptchaServiceImpl implements CaptchaService {
             "舟", "桥", "路", "塔", "楼", "亭", "阁", "窗", "门", "灯"
     };
 
-    public CaptchaServiceImpl(RedisService redisService) {
-        this.redisService = redisService;
+    public CaptchaServiceImpl(RedisCache redisCache) {
+        this.redisCache = redisCache;
         this.objectMapper = new ObjectMapper();
     }
 
@@ -89,18 +88,18 @@ public class CaptchaServiceImpl implements CaptchaService {
         // 生成图片
         String base64Image = generateCaptchaImage(phrase, allChars);
 
-        // 存入 Redis（JSON 格式）
+        // 存入 Redis（ObjectMapper 序列化）
         String captchaKey = UUID.randomUUID().toString().replace("-", "");
-        String redisKey = CAPTCHA_KEY_PREFIX + captchaKey;
-        String json = buildCaptchaJson(phrase, allChars);
-        redisService.setWithExpire(redisKey, json, CAPTCHA_EXPIRE_SECONDS, TimeUnit.SECONDS);
+        CaptchaStoreData storeData = new CaptchaStoreData(phrase,
+                allChars.stream().map(c -> new CharStoreData(c.character, c.x, c.y, c.target, c.order)).toList());
+        redisCache.put(RedisKeyNamespace.CAPTCHA, captchaKey, storeData, CAPTCHA_TTL);
 
         log.info("验证码生成成功 - key: {}, 词语: {}, 总字数: {}", captchaKey, phrase, allChars.size());
 
         return new CaptchaData(
                 captchaKey, base64Image,
                 "请依次点击：" + phrase,
-                2, IMAGE_WIDTH, IMAGE_HEIGHT, CAPTCHA_EXPIRE_SECONDS
+                2, IMAGE_WIDTH, IMAGE_HEIGHT, CAPTCHA_TTL.toSeconds()
         );
     }
 
@@ -110,26 +109,19 @@ public class CaptchaServiceImpl implements CaptchaService {
             return false;
         }
 
-        String redisKey = CAPTCHA_KEY_PREFIX + captchaKey;
-        String json = redisService.get(redisKey, String.class);
-        if (json == null) {
+        var stored = redisCache.get(RedisKeyNamespace.CAPTCHA, captchaKey, CaptchaStoreData.class);
+        if (stored.isEmpty()) {
             log.warn("验证码不存在或已过期 - key: {}", captchaKey);
             return false;
         }
 
         // 验证后立即删除（一次性使用）
-        redisService.delete(redisKey);
+        redisCache.evict(RedisKeyNamespace.CAPTCHA, captchaKey);
 
-        try {
-            Map<String, Object> data = objectMapper.readValue(json, Map.class);
-            String phrase = (String) data.get("phrase");
-            boolean valid = phrase.equals(captchaCode.trim());
-            log.info("验证码文本验证: {} - key: {}", valid ? "通过" : "不通过", captchaKey);
-            return valid;
-        } catch (JsonProcessingException e) {
-            log.error("解析验证码数据失败", e);
-            return false;
-        }
+        CaptchaStoreData data = stored.get();
+        boolean valid = data.phrase().equals(captchaCode.trim());
+        log.info("验证码文本验证: {} - key: {}", valid ? "通过" : "不通过", captchaKey);
+        return valid;
     }
 
     @Override
@@ -138,49 +130,38 @@ public class CaptchaServiceImpl implements CaptchaService {
             return false;
         }
 
-        String redisKey = CAPTCHA_KEY_PREFIX + captchaKey;
-        String json = redisService.get(redisKey, String.class);
-        if (json == null) {
+        var stored = redisCache.get(RedisKeyNamespace.CAPTCHA, captchaKey, CaptchaStoreData.class);
+        if (stored.isEmpty()) {
             log.warn("验证码不存在或已过期 - key: {}", captchaKey);
             return false;
         }
 
-        redisService.delete(redisKey);
+        redisCache.evict(RedisKeyNamespace.CAPTCHA, captchaKey);
 
-        try {
-            Map<String, Object> data = objectMapper.readValue(json, Map.class);
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> chars = (List<Map<String, Object>>) data.get("chars");
+        CaptchaStoreData data = stored.get();
+        // 提取目标字符（按 order 排序）
+        List<CharStoreData> targetChars = data.chars().stream()
+                .filter(c -> c.target)
+                .sorted(Comparator.comparingInt(c -> c.order))
+                .toList();
 
-            // 提取目标字符（按 order 排序）
-            List<Map<String, Object>> targetChars = chars.stream()
-                    .filter(c -> (Boolean) c.get("target"))
-                    .sorted(Comparator.comparingInt(c -> (Integer) c.get("order")))
-                    .toList();
-
-            if (positions.size() != targetChars.size()) {
-                log.warn("点击次数({})与目标字符数({})不匹配", positions.size(), targetChars.size());
-                return false;
-            }
-
-            for (int i = 0; i < targetChars.size(); i++) {
-                Map<String, Object> tc = targetChars.get(i);
-                int cx = (Integer) tc.get("x");
-                int cy = (Integer) tc.get("y");
-                ClickPosition click = positions.get(i);
-                double dist = Math.sqrt(Math.pow(click.x() - cx, 2) + Math.pow(click.y() - cy, 2));
-                if (dist > CLICK_TOLERANCE) {
-                    log.info("第{}个点击偏离目标(距离{}px > {}px)", i + 1, String.format("%.1f", dist), CLICK_TOLERANCE);
-                    return false;
-                }
-            }
-
-            log.info("验证码坐标验证通过 - key: {}", captchaKey);
-            return true;
-        } catch (Exception e) {
-            log.error("验证码坐标验证失败", e);
+        if (positions.size() != targetChars.size()) {
+            log.warn("点击次数({})与目标字符数({})不匹配", positions.size(), targetChars.size());
             return false;
         }
+
+        for (int i = 0; i < targetChars.size(); i++) {
+            CharStoreData tc = targetChars.get(i);
+            ClickPosition click = positions.get(i);
+            double dist = Math.sqrt(Math.pow(click.x() - tc.x, 2) + Math.pow(click.y() - tc.y, 2));
+            if (dist > CLICK_TOLERANCE) {
+                log.info("第{}个点击偏离目标(距离{}px > {}px)", i + 1, String.format("%.1f", dist), CLICK_TOLERANCE);
+                return false;
+            }
+        }
+
+        log.info("验证码坐标验证通过 - key: {}", captchaKey);
+        return true;
     }
 
     // ==================== 图片生成 ====================
@@ -338,25 +319,6 @@ public class CaptchaServiceImpl implements CaptchaService {
 
     // ==================== 工具方法 ====================
 
-    private String buildCaptchaJson(String phrase, List<CharInfo> allChars) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\"phrase\":\"").append(phrase).append("\",\"chars\":[");
-        for (int i = 0; i < allChars.size(); i++) {
-            CharInfo ci = allChars.get(i);
-            if (i > 0) sb.append(",");
-            sb.append("{\"char\":\"").append(ci.character)
-                    .append("\",\"x\":").append(ci.x)
-                    .append(",\"y\":").append(ci.y)
-                    .append(",\"target\":").append(ci.target);
-            if (ci.target) {
-                sb.append(",\"order\":").append(ci.order);
-            }
-            sb.append("}");
-        }
-        sb.append("]}");
-        return sb.toString();
-    }
-
     private String getChineseFontName() {
         String os = System.getProperty("os.name", "").toLowerCase();
         if (os.contains("mac")) {
@@ -381,4 +343,10 @@ public class CaptchaServiceImpl implements CaptchaService {
             this.order = order;
         }
     }
+
+    /** 验证码存储数据（Redis 缓存用） */
+    public record CaptchaStoreData(String phrase, List<CharStoreData> chars) {}
+
+    /** 单字存储数据 */
+    public record CharStoreData(String character, int x, int y, boolean target, int order) {}
 }

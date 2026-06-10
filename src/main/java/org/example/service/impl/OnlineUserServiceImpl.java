@@ -3,8 +3,10 @@ package org.example.service.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.example.redis.core.RedisKeyGenerator;
+import org.example.redis.core.RedisKeyNamespace;
+import org.example.redis.service.RedisOps;
 import org.example.service.OnlineUserService;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -16,14 +18,11 @@ import java.util.*;
 @Service
 public class OnlineUserServiceImpl implements OnlineUserService {
 
-    private final StringRedisTemplate stringRedisTemplate;
+    private final RedisOps redisOps;
     private final ObjectMapper objectMapper;
 
-    private static final String ACCESS_TOKEN_PREFIX = "oauth2:access_token:";
-    private static final String AUTH_PREFIX = "oauth2:authorization:";
-
-    public OnlineUserServiceImpl(StringRedisTemplate stringRedisTemplate) {
-        this.stringRedisTemplate = stringRedisTemplate;
+    public OnlineUserServiceImpl(RedisOps redisOps) {
+        this.redisOps = redisOps;
         this.objectMapper = new ObjectMapper();
     }
 
@@ -32,17 +31,17 @@ public class OnlineUserServiceImpl implements OnlineUserService {
         List<Map<String, Object>> result = new ArrayList<>();
         Set<String> seenUsers = new HashSet<>();
 
-        // 扫描所有 access_token 索引
-        Set<String> tokenKeys = stringRedisTemplate.keys(ACCESS_TOKEN_PREFIX + "*");
-        if (tokenKeys == null || tokenKeys.isEmpty()) return result;
+        // 使用 SCAN 替代 KEYS（非阻塞），遍历所有 access_token 索引
+        Set<String> tokenKeys = redisOps.scanToSet(RedisKeyGenerator.pattern(RedisKeyNamespace.OAUTH2_ACCESS_TOKEN));
+        if (tokenKeys.isEmpty()) return result;
 
         for (String tokenKey : tokenKeys) {
             try {
-                String authorizationId = stringRedisTemplate.opsForValue().get(tokenKey);
+                String authorizationId = redisOps.get(tokenKey);
                 if (authorizationId == null) continue;
 
-                // 直接读取 authorization 的 JSON，避免 Spring Security 7 allowlist 问题
-                String authJson = stringRedisTemplate.opsForValue().get(AUTH_PREFIX + authorizationId);
+                String authKey = RedisKeyGenerator.key(RedisKeyNamespace.OAUTH2_AUTHORIZATION, authorizationId);
+                String authJson = redisOps.get(authKey);
                 if (authJson == null) continue;
 
                 JsonNode root = objectMapper.readTree(authJson);
@@ -74,7 +73,7 @@ public class OnlineUserServiceImpl implements OnlineUserService {
 
                 if (expiresAt != null) {
                     long remaining = expiresAt.getEpochSecond() - Instant.now().getEpochSecond();
-                    if (remaining <= 0) continue; // 跳过已过期的
+                    if (remaining <= 0) continue;
                     user.put("remainingSeconds", remaining);
                     user.put("remainingDisplay", formatRemaining(remaining));
                 }
@@ -100,27 +99,24 @@ public class OnlineUserServiceImpl implements OnlineUserService {
 
     @Override
     public void forceLogout(String authorizationId) {
-        // 删除 authorization 和关联的 token 索引
-        String authKey = AUTH_PREFIX + authorizationId;
-        String authJson = stringRedisTemplate.opsForValue().get(authKey);
+        String authKey = RedisKeyGenerator.key(RedisKeyNamespace.OAUTH2_AUTHORIZATION, authorizationId);
+        String authJson = redisOps.get(authKey);
         if (authJson != null) {
             try {
                 JsonNode root = objectMapper.readTree(authJson);
-                // 删除 access_token 索引
                 String accessTokenValue = root.path("accessToken").path("token").path("tokenValue").asText("");
                 if (!accessTokenValue.isEmpty()) {
-                    stringRedisTemplate.delete(ACCESS_TOKEN_PREFIX + accessTokenValue);
+                    redisOps.delete(RedisKeyGenerator.key(RedisKeyNamespace.OAUTH2_ACCESS_TOKEN, accessTokenValue));
                 }
-                // 删除 refresh_token 索引
                 String refreshTokenValue = root.path("refreshToken").path("token").path("tokenValue").asText("");
                 if (!refreshTokenValue.isEmpty()) {
-                    stringRedisTemplate.delete("oauth2:refresh_token:" + refreshTokenValue);
+                    redisOps.delete(RedisKeyGenerator.key(RedisKeyNamespace.OAUTH2_REFRESH_TOKEN, refreshTokenValue));
                 }
             } catch (Exception e) {
                 log.warn("解析授权信息失败: {}", e.getMessage());
             }
         }
-        stringRedisTemplate.delete(authKey);
+        redisOps.delete(authKey);
         log.info("已强制下线用户, authorizationId: {}", authorizationId);
     }
 

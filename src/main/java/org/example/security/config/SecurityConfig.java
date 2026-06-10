@@ -1,10 +1,10 @@
 package org.example.security.config;
 
+import org.example.redis.service.RedisOps;
 import org.example.security.filter.TokenRevocationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -66,7 +66,7 @@ public class SecurityConfig {
     @Bean
     @Order(2)
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
-                                                    StringRedisTemplate stringRedisTemplate) throws Exception {
+                                                    RedisOps redisOps) throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -100,7 +100,7 @@ public class SecurityConfig {
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
                 )
-                .addFilterAfter(new TokenRevocationFilter(stringRedisTemplate),
+                .addFilterAfter(new TokenRevocationFilter(redisOps),
                         BearerTokenAuthenticationFilter.class)
                 .build();
     }

@@ -25,6 +25,8 @@ public class PaymentConfig {
     private String apiV3Key;
     private String mchSerialNo;
     private String privateKeyPath;
+    private String wechatPlatformCert;
+    private String wechatPlatformCertSerial;
 
     private Boolean enabled;
     private Integer orderExpireMinutes;
@@ -61,6 +63,10 @@ public class PaymentConfig {
     public void setMchSerialNo(String mchSerialNo) { this.mchSerialNo = mchSerialNo; }
     public String getPrivateKeyPath() { return privateKeyPath; }
     public void setPrivateKeyPath(String privateKeyPath) { this.privateKeyPath = privateKeyPath; }
+    public String getWechatPlatformCert() { return wechatPlatformCert; }
+    public void setWechatPlatformCert(String wechatPlatformCert) { this.wechatPlatformCert = wechatPlatformCert; }
+    public String getWechatPlatformCertSerial() { return wechatPlatformCertSerial; }
+    public void setWechatPlatformCertSerial(String wechatPlatformCertSerial) { this.wechatPlatformCertSerial = wechatPlatformCertSerial; }
     public Boolean getEnabled() { return enabled; }
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }
     public Integer getOrderExpireMinutes() { return orderExpireMinutes; }

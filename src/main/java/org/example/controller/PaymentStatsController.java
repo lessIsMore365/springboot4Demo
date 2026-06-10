@@ -1,13 +1,16 @@
 package org.example.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.dto.ApiResponse;
 import org.example.service.PaymentStatsService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
@@ -16,65 +19,74 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/payment/stats")
 @RequiredArgsConstructor
+@Tag(name = "支付统计", description = "支付订单统计分析，含概览、趋势、分布及 ECharts 可视化仪表盘")
 public class PaymentStatsController {
 
     private final PaymentStatsService statsService;
 
-    // ---- REST API endpoints ----
-
     @GetMapping("/overview")
-    public Map<String, Object> overview(@RequestParam(required = false) String startDate,
-                                        @RequestParam(required = false) String endDate,
-                                        @RequestParam(required = false) String paymentMethod) {
+    @Operation(summary = "概览统计", description = "总订单数、总金额、成功/退款/待支付/已关闭订单数及金额")
+    public ApiResponse<Map<String, Object>> overview(
+            @Parameter(description = "开始日期，默认 30 天前") @RequestParam(required = false) String startDate,
+            @Parameter(description = "结束日期，默认今天") @RequestParam(required = false) String endDate,
+            @Parameter(description = "支付方式: ALIPAY / WECHAT") @RequestParam(required = false) String paymentMethod) {
         LocalDate[] range = parseRange(startDate, endDate);
         Map<String, Object> data = statsService.getOverview(range[0].atStartOfDay(), range[1].atTime(LocalTime.MAX), paymentMethod);
-        return Map.of("success", true, "data", data, "timestamp", System.currentTimeMillis());
+        return ApiResponse.ok(data);
     }
 
     @GetMapping("/trend")
-    public Map<String, Object> trend(@RequestParam(required = false) String startDate,
-                                     @RequestParam(required = false) String endDate,
-                                     @RequestParam(required = false) String paymentMethod) {
+    @Operation(summary = "收入趋势", description = "每日支付金额和订单数的时间序列")
+    public ApiResponse<List<Map<String, Object>>> trend(
+            @Parameter(description = "开始日期，默认 30 天前") @RequestParam(required = false) String startDate,
+            @Parameter(description = "结束日期，默认今天") @RequestParam(required = false) String endDate,
+            @Parameter(description = "支付方式: ALIPAY / WECHAT") @RequestParam(required = false) String paymentMethod) {
         LocalDate[] range = parseRange(startDate, endDate);
         List<Map<String, Object>> data = statsService.getTrend(range[0].atStartOfDay(), range[1].atTime(LocalTime.MAX), paymentMethod);
-        return Map.of("success", true, "data", data, "timestamp", System.currentTimeMillis());
+        return ApiResponse.ok(data);
     }
 
     @GetMapping("/by-method")
-    public Map<String, Object> byMethod(@RequestParam(required = false) String startDate,
-                                        @RequestParam(required = false) String endDate) {
+    @Operation(summary = "支付方式分布", description = "支付宝 vs 微信支付的金额和订单数对比")
+    public ApiResponse<List<Map<String, Object>>> byMethod(
+            @Parameter(description = "开始日期，默认 30 天前") @RequestParam(required = false) String startDate,
+            @Parameter(description = "结束日期，默认今天") @RequestParam(required = false) String endDate) {
         LocalDate[] range = parseRange(startDate, endDate);
         List<Map<String, Object>> data = statsService.getStatsByMethod(range[0].atStartOfDay(), range[1].atTime(LocalTime.MAX));
-        return Map.of("success", true, "data", data, "timestamp", System.currentTimeMillis());
+        return ApiResponse.ok(data);
     }
 
     @GetMapping("/by-biz-type")
-    public Map<String, Object> byBizType(@RequestParam(required = false) String startDate,
-                                         @RequestParam(required = false) String endDate,
-                                         @RequestParam(required = false) String paymentMethod) {
+    @Operation(summary = "业务分类分布", description = "按 bizType 分组统计金额和订单数")
+    public ApiResponse<List<Map<String, Object>>> byBizType(
+            @Parameter(description = "开始日期，默认 30 天前") @RequestParam(required = false) String startDate,
+            @Parameter(description = "结束日期，默认今天") @RequestParam(required = false) String endDate,
+            @Parameter(description = "支付方式: ALIPAY / WECHAT") @RequestParam(required = false) String paymentMethod) {
         LocalDate[] range = parseRange(startDate, endDate);
         List<Map<String, Object>> data = statsService.getStatsByBizType(range[0].atStartOfDay(), range[1].atTime(LocalTime.MAX), paymentMethod);
-        return Map.of("success", true, "data", data, "timestamp", System.currentTimeMillis());
+        return ApiResponse.ok(data);
     }
 
     @GetMapping("/by-status")
-    public Map<String, Object> byStatus(@RequestParam(required = false) String startDate,
-                                        @RequestParam(required = false) String endDate,
-                                        @RequestParam(required = false) String paymentMethod) {
+    @Operation(summary = "订单状态分布", description = "PENDING/SUCCESS/CLOSED/REFUND 四类占比")
+    public ApiResponse<List<Map<String, Object>>> byStatus(
+            @Parameter(description = "开始日期，默认 30 天前") @RequestParam(required = false) String startDate,
+            @Parameter(description = "结束日期，默认今天") @RequestParam(required = false) String endDate,
+            @Parameter(description = "支付方式: ALIPAY / WECHAT") @RequestParam(required = false) String paymentMethod) {
         LocalDate[] range = parseRange(startDate, endDate);
         List<Map<String, Object>> data = statsService.getStatsByStatus(range[0].atStartOfDay(), range[1].atTime(LocalTime.MAX), paymentMethod);
-        return Map.of("success", true, "data", data, "timestamp", System.currentTimeMillis());
+        return ApiResponse.ok(data);
     }
 
     @GetMapping("/recent")
-    public Map<String, Object> recentOrders() {
+    @Operation(summary = "最近订单", description = "最近 10 笔支付订单简要信息")
+    public ApiResponse<List<Map<String, Object>>> recentOrders() {
         List<Map<String, Object>> data = statsService.getRecentOrders();
-        return Map.of("success", true, "data", data, "timestamp", System.currentTimeMillis());
+        return ApiResponse.ok(data);
     }
 
-    // ---- ECharts 可视化仪表盘 ----
-
     @GetMapping(value = "/chart", produces = MediaType.TEXT_HTML_VALUE)
+    @Operation(summary = "ECharts 可视化仪表盘", description = "支付统计可视化 HTML 页面，通过 ?token= 传参认证")
     public String chart() {
         return CHART_HTML;
     }

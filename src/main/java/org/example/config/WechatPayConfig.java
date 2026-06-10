@@ -2,6 +2,7 @@ package org.example.config;
 
 import lombok.extern.slf4j.Slf4j;
 import org.example.payment.service.PaymentConfigService;
+import org.example.payment.service.WechatCertService;
 import org.springframework.context.annotation.Configuration;
 
 import javax.crypto.Mac;
@@ -9,8 +10,10 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.security.Signature;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 
 @Slf4j
@@ -18,9 +21,11 @@ import java.util.Base64;
 public class WechatPayConfig {
 
     private final PaymentConfigService configService;
+    private final WechatCertService certService;
 
-    public WechatPayConfig(PaymentConfigService configService) {
+    public WechatPayConfig(PaymentConfigService configService, WechatCertService certService) {
         this.configService = configService;
+        this.certService = certService;
     }
 
     public String getAppId() { return configService.getConfig("WECHAT").getAppId(); }
@@ -100,5 +105,16 @@ public class WechatPayConfig {
 
     private String generateNonce() {
         return java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 32);
+    }
+
+    /**
+     * 验证微信支付回调签名
+     * @param message 待验签消息: timestamp + "\n" + nonce + "\n" + body + "\n"
+     * @param wechatSignature Base64 编码的回调签名
+     * @param serial 证书序列号
+     * @return 验签是否通过
+     */
+    public boolean verifySignature(String message, String wechatSignature, String serial) {
+        return certService.verifySignature(message, wechatSignature, serial);
     }
 }

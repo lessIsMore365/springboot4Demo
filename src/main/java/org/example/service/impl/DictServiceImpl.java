@@ -9,16 +9,14 @@ import org.example.entity.SysDictData;
 import org.example.entity.SysDictType;
 import org.example.mapper.SysDictDataMapper;
 import org.example.mapper.SysDictTypeMapper;
+import org.example.redis.core.RedisKeyNamespace;
+import org.example.redis.service.RedisCache;
 import org.example.service.DictService;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-
+import java.time.Duration;
+import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -27,11 +25,9 @@ public class DictServiceImpl implements DictService {
 
     private final SysDictTypeMapper dictTypeMapper;
     private final SysDictDataMapper dictDataMapper;
-    private final StringRedisTemplate stringRedisTemplate;
+    private final RedisCache redisCache;
 
-    private static final String CACHE_PREFIX = "sys_dict:";
-    private static final long CACHE_TTL = 24;
-    private static final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+    private static final Duration CACHE_TTL = Duration.ofHours(24);
 
     @PostConstruct
     void initCache() {
@@ -74,11 +70,10 @@ public class DictServiceImpl implements DictService {
     public void deleteType(Long id) {
         SysDictType type = dictTypeMapper.selectById(id);
         if (type != null) {
-            // 级联删除字典数据
             dictDataMapper.delete(new LambdaQueryWrapper<SysDictData>()
                     .eq(SysDictData::getDictType, type.getDictType()));
             dictTypeMapper.deleteById(id);
-            stringRedisTemplate.delete(CACHE_PREFIX + type.getDictType());
+            redisCache.evict(RedisKeyNamespace.SYS_DICT, type.getDictType());
         }
     }
 
@@ -95,20 +90,11 @@ public class DictServiceImpl implements DictService {
 
     @Override
     public List<SysDictData> getDataByType(String dictType) {
-        // 优先从 Redis 缓存读取
-        String cacheKey = CACHE_PREFIX + dictType;
-        List<String> cached = stringRedisTemplate.opsForList().range(cacheKey, 0, -1);
-        if (cached != null && !cached.isEmpty()) {
-            return cached.stream().map(json -> {
-                try {
-                    return objectMapper.readValue(json, SysDictData.class);
-                } catch (Exception e) {
-                    log.warn("字典数据反序列化失败: {}", e.getMessage());
-                    return null;
-                }
-            }).filter(d -> d != null).collect(Collectors.toList());
+        // Cache-Aside: 优先缓存，miss 时回源 DB
+        List<SysDictData> cached = redisCache.getList(RedisKeyNamespace.SYS_DICT, dictType, SysDictData.class);
+        if (!cached.isEmpty()) {
+            return cached;
         }
-        // 从数据库加载并写入缓存
         List<SysDictData> list = dictDataMapper.selectList(new LambdaQueryWrapper<SysDictData>()
                 .eq(SysDictData::getDictType, dictType)
                 .eq(SysDictData::getStatus, "0")
@@ -162,24 +148,8 @@ public class DictServiceImpl implements DictService {
     }
 
     private void cacheDictData(String dictType, List<SysDictData> list) {
-        String cacheKey = CACHE_PREFIX + dictType;
-        stringRedisTemplate.delete(cacheKey);
+        redisCache.evict(RedisKeyNamespace.SYS_DICT, dictType);
         if (list.isEmpty()) return;
-        try {
-            List<String> jsons = list.stream().map(d -> {
-                try {
-                    return objectMapper.writeValueAsString(d);
-                } catch (Exception e) {
-                    log.warn("字典数据序列化失败: id={}, {}", d.getId(), e.getMessage());
-                    return null;
-                }
-            }).filter(j -> j != null).collect(Collectors.toList());
-            if (!jsons.isEmpty()) {
-                stringRedisTemplate.opsForList().rightPushAll(cacheKey, jsons);
-                stringRedisTemplate.expire(cacheKey, CACHE_TTL, TimeUnit.HOURS);
-            }
-        } catch (Exception e) {
-            log.warn("字典缓存写入失败: dictType={}, {}", dictType, e.getMessage());
-        }
+        redisCache.putAll(RedisKeyNamespace.SYS_DICT, dictType, list, CACHE_TTL);
     }
 }

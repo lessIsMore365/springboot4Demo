@@ -49,6 +49,9 @@ public class PaymentOrder {
     /** 退款金额 */
     private BigDecimal refundAmount;
 
+    /** 币种 (ISO 4217)，默认 CNY */
+    private String currency;
+
     /** 通知原始数据(JSON) */
     private String notifyData;
 
